@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::source_file::SourcePosition;
+
 #[derive(Debug, Error, Clone, Copy)]
 pub enum LexerErrorType {
     #[error("Unexpected character: {0}")]
@@ -8,23 +10,21 @@ pub enum LexerErrorType {
     ExpectedAnother { expected: char, found: char },
     #[error("Unterminated string literal")]
     UnterminatedString,
-    #[error("Invalid number format")]
-    InvalidNumberFormat,
+    #[error("Invalid number literal")]
+    InvalidNumberLiteral,
 }
 
-#[derive(Debug, Error, Clone, Copy)]
-#[error("Syntax error at {line}:{column}: {err_type}")]
+#[derive(Debug, Error, Clone)]
+#[error("Syntax error at {}:{} :: {}", range.0.line, range.0.column, err_type)]
 pub struct LexerError {
-    pub line: usize,
-    pub column: usize,
+    pub range: (SourcePosition, SourcePosition),
     pub err_type: LexerErrorType,
 }
 
 impl LexerError {
-    pub fn new(line: usize, column: usize, err_type: LexerErrorType) -> Self {
+    pub fn new(start: SourcePosition, end: SourcePosition, err_type: LexerErrorType) -> Self {
         LexerError {
-            line,
-            column,
+            range: (start, end),
             err_type,
         }
     }

@@ -1,4 +1,4 @@
-use crate::symbol::Symbol;
+use crate::{source_file::SourcePosition, symbol::Symbol};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
@@ -8,62 +8,69 @@ pub enum Literal {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Token {
+pub enum TokenType {
     // punctuation
     Comma,
-    Semicolon,
     Dot,
-    LeftParen,
-    RightParen,
     LeftBrace,
-    RightBrace,
+    LeftParen,
     LeftSquare,
+    RightBrace,
+    RightParen,
     RightSquare,
+    Semicolon,
 
     // operators
-    Plus,
-    Minus,
+    And,
+    Arrow,
     Asterisk,
-    Slash,
-    Percent,
-    Equal,
+    AsteriskAssign,
+    BitAnd,
+    BitAndAssign,
+    BitOr,
+    BitOrAssign,
+    BitXor,
+    BitXorAssign,
+    Decrement,
     DoubleEqual,
-    NotEqual,
+    Equal,
     Greater,
     GreaterEqual,
+    Increment,
+    LeftShift,
+    LeftShiftAssign,
     Less,
     LessEqual,
-    And,
-    Or,
-    Not,
-    LeftShift,
-    RightShift,
-    BitAnd,
-    BitOr,
-    BitXor,
-    PlusAssign,
+    Minus,
     MinusAssign,
-    AsteriskAssign,
-    SlashAssign,
+    Not,
+    NotEqual,
+    Or,
+    Percent,
     PercentAssign,
-    LeftShiftAssign,
+    Plus,
+    PlusAssign,
+    RightShift,
     RightShiftAssign,
-    BitAndAssign,
-    BitOrAssign,
-    BitXorAssign,
-    Increment,
-    Decrement,
-    Arrow,
+    Slash,
+    SlashAssign,
 
     // keywords
-    KIf,
     KElse,
-    KWhile,
     KFor,
+    KIf,
     KReturn,
+    KWhile,
 
     // literals and identifiers
     Identifier(Symbol),
     Literal(Literal),
     Eof,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Token {
+    pub token_type: TokenType,
+    pub begin: SourcePosition,
+    pub end: SourcePosition,
 }
