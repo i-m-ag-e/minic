@@ -1,6 +1,8 @@
+mod ast;
 mod lexer;
 pub mod source_file;
 mod symbol;
+mod with_token;
 
 use anyhow;
 use lexer::Lexer;
