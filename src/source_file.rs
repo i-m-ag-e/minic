@@ -1,18 +1,42 @@
-use std::ops::Deref;
+use std::ops::{Add, Deref, Sub};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourceFile {
     filename: String,
     content: String,
+    line_starts: Vec<usize>,
 }
 
 impl SourceFile {
     pub fn new(filename: String, content: String) -> Self {
-        Self { filename, content }
+        let mut pos = 0;
+        let mut line_starts = vec![0];
+        for line in content.lines() {
+            pos += line.len() + 1;
+            line_starts.push(pos);
+        }
+        line_starts.push(content.len());
+        Self {
+            filename,
+            content,
+            line_starts,
+        }
     }
 
     pub fn filename(&self) -> &str {
         &self.filename
+    }
+
+    pub fn line_col(&self, pos: usize) -> (usize, usize) {
+        let mut line = 0;
+        for (i, &start) in self.line_starts.iter().enumerate() {
+            if start > pos {
+                break;
+            }
+            line = i + 1;
+        }
+        let col = pos - self.line_starts[line - 1] + 1;
+        (line, col)
     }
 }
 
@@ -25,30 +49,63 @@ impl Deref for SourceFile {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SourcePosition {
-    pub pos: usize,
-    pub line: usize,
-    pub column: usize,
+pub struct SourcePosition(pub usize);
+
+impl Add<usize> for SourcePosition {
+    type Output = SourcePosition;
+
+    fn add(self, rhs: usize) -> Self::Output {
+        SourcePosition(self.0 + rhs)
+    }
 }
 
-impl SourcePosition {
-    pub fn new(pos: usize, line: usize, column: usize) -> Self {
-        SourcePosition { pos, line, column }
+impl Sub<usize> for SourcePosition {
+    type Output = SourcePosition;
+
+    fn sub(self, rhs: usize) -> Self::Output {
+        SourcePosition(self.0 - rhs)
+    }
+}
+
+impl Deref for SourcePosition {
+    type Target = usize;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_line_col() {
+        let source = SourceFile::new(
+            "test.c".to_string(),
+            "int main() {\n    return 0; }".to_string(),
+        );
+        assert_eq!(source.line_col(0), (1, 1));
+        assert_eq!(source.line_col(4), (1, 5));
+        assert_eq!(source.line_col(12), (1, 13));
+        assert_eq!(source.line_col(13), (2, 1));
+        assert_eq!(source.line_col(18), (2, 6));
+        assert_eq!(source.line_col(21), (2, 9));
     }
 
-    pub fn increment(&self, c: char) -> Self {
-        if c == '\n' {
-            SourcePosition {
-                pos: self.pos + 1,
-                line: self.line + 1,
-                column: 1,
-            }
-        } else {
-            SourcePosition {
-                pos: self.pos + 1,
-                line: self.line,
-                column: self.column + 1,
-            }
-        }
+    #[test]
+    fn test_multi_newline() {
+        let source = SourceFile::new(
+            "test.c".to_string(),
+            "line1\nline2\n\nline4\n\n\nline5".to_string(),
+        );
+        assert_eq!(source.line_col(0), (1, 1));
+        assert_eq!(source.line_col(6), (2, 1));
+        assert_eq!(source.line_col(12), (3, 1));
+        assert_eq!(source.line_col(13), (4, 1));
+        assert_eq!(source.line_col(18), (4, 6));
+        assert_eq!(source.line_col(19), (5, 1));
+        assert_eq!(source.line_col(20), (6, 1));
+        assert_eq!(source.line_col(21), (7, 1));
     }
 }

@@ -35,16 +35,18 @@ fn main() -> std::io::Result<()> {
             let range = compile_err.downcast::<LexerError>().map(|e| e.range);
 
             if let Ok(lexer_err) = range {
+                let line_col_start = source_file.line_col(lexer_err.0.0);
+                let line_col_end = source_file.line_col(lexer_err.1.0);
                 eprintln!(
                     "{}",
                     format!(
                         "Error in file {} at {}:{} - {}:{} (at `{}`) :: {}",
                         source_file.filename(),
-                        lexer_err.0.line,
-                        lexer_err.0.column,
-                        lexer_err.1.line,
-                        lexer_err.1.column,
-                        source_file[lexer_err.0.pos..lexer_err.1.pos].replace('\n', "\\n"),
+                        line_col_start.0,
+                        line_col_start.1,
+                        line_col_end.0,
+                        line_col_end.1,
+                        source_file[lexer_err.0.0..lexer_err.1.0].replace('\n', "\\n"),
                         msg
                     )
                     .red()
