@@ -46,13 +46,15 @@ macro_rules! multi_char_tok {
 
 lazy_static! {
     static ref KW_LIST: Vec<(&'static str, TokenType)> = vec![
-        ("true", TokenType::Literal(Literal::Bool(true))),
-        ("false", TokenType::Literal(Literal::Bool(false))),
-        ("if", TokenType::KIf),
         ("else", TokenType::KElse),
-        ("while", TokenType::KWhile),
+        ("false", TokenType::Literal(Literal::Bool(false))),
         ("for", TokenType::KFor),
+        ("if", TokenType::KIf),
+        ("int", TokenType::KInt),
         ("return", TokenType::KReturn),
+        ("true", TokenType::Literal(Literal::Bool(true))),
+        ("void", TokenType::KVoid),
+        ("while", TokenType::KWhile),
     ];
     static ref KEYWORDS: HashMap<&'static str, TokenType> =
         HashMap::from_iter(KW_LIST.iter().cloned());

@@ -59,7 +59,9 @@ pub enum TokenType {
     KElse,
     KFor,
     KIf,
+    KInt,
     KReturn,
+    KVoid,
     KWhile,
 
     // literals and identifiers
