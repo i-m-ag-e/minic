@@ -1,8 +1,12 @@
-use crate::{lexer::token::Token, with_token::WithToken};
+use crate::{
+    lexer::token::{Literal, Token},
+    with_token::WithToken,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Binary(BinaryExpr),
+    Constant(WithToken<Literal>),
     Group(Box<WithToken<Expr>>),
     Unary(UnaryExpr),
 }
@@ -22,12 +26,14 @@ pub struct UnaryExpr {
 
 pub trait ExprVisitor<R> {
     fn visit_binary_expr(&self, expr: &BinaryExpr) -> R;
+    fn visit_constant(&self, expr: &WithToken<Literal>) -> R;
     fn visit_group_expr(&self, expr: &WithToken<Expr>) -> R;
     fn visit_unary_expr(&self, expr: &UnaryExpr) -> R;
 
     fn visit(&self, expr: &Expr) -> R {
         match expr {
             Expr::Binary(binary_expr) => self.visit_binary_expr(binary_expr),
+            Expr::Constant(lit) => self.visit_constant(lit),
             Expr::Group(group_expr) => self.visit_group_expr(group_expr),
             Expr::Unary(unary_expr) => self.visit_unary_expr(unary_expr),
         }
@@ -36,12 +42,14 @@ pub trait ExprVisitor<R> {
 
 pub trait ExprVisitorMut<R> {
     fn visit_binary_expr(&mut self, expr: &BinaryExpr) -> R;
+    fn visit_constant(&self, expr: &WithToken<Literal>) -> R;
     fn visit_group_expr(&mut self, expr: &WithToken<Expr>) -> R;
     fn visit_unary_expr(&mut self, expr: &UnaryExpr) -> R;
 
     fn visit(&mut self, expr: &Expr) -> R {
         match expr {
             Expr::Binary(binary_expr) => self.visit_binary_expr(binary_expr),
+            Expr::Constant(lit) => self.visit_constant(lit),
             Expr::Group(group_expr) => self.visit_group_expr(group_expr),
             Expr::Unary(unary_expr) => self.visit_unary_expr(unary_expr),
         }

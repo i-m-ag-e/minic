@@ -1,7 +1,16 @@
-mod expr;
-mod stmt;
+pub mod expr;
+pub mod stmt;
+
+use stmt::Stmt;
 
 #[derive(Debug, Clone)]
 pub struct Program {
-    pub stmts: Vec<stmt::Stmt>,
+    pub function_defs: Vec<FunctionDef>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FunctionDef {
+    pub name: String,
+    // pub params: Vec<String>,
+    pub body: Option<Vec<Stmt>>,
 }
