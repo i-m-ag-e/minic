@@ -19,6 +19,10 @@ struct Cli {
     /// generate object file
     #[arg(short = 'c')]
     object_file: bool,
+
+    /// only run the lexer
+    #[arg(long)]
+    lex: bool,
 }
 
 fn main() -> std::io::Result<()> {
