@@ -28,6 +28,10 @@ struct Cli {
     /// only run the lexer and parser
     #[arg(long)]
     parse: bool,
+
+    /// only run till the codegen phase
+    #[arg(long)]
+    codegen: bool,
 }
 
 fn main() -> std::io::Result<()> {
@@ -36,7 +40,7 @@ fn main() -> std::io::Result<()> {
         let source = fs::read_to_string(&file)?;
         let source_file = SourceFile::new(file.clone(), source);
 
-        let compile_result = minic::compile(&source_file, cli.lex);
+        let compile_result = minic::compile(&source_file, cli.lex, cli.parse);
 
         let Ok(_) = compile_result else {
             let compile_err = compile_result.unwrap_err();

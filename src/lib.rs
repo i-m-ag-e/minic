@@ -1,3 +1,4 @@
+mod asm;
 mod ast;
 mod lexer;
 mod parser;
@@ -14,11 +15,12 @@ pub use lexer::lexer_error;
 pub use parser::parser_error;
 
 use crate::{
+    asm::AsmGen,
     lexer::{LexerResult, token::TokenType},
     parser::Parser,
 };
 
-pub fn compile(source_file: &SourceFile, only_lex: bool) -> anyhow::Result<()> {
+pub fn compile(source_file: &SourceFile, only_lex: bool, only_parse: bool) -> anyhow::Result<()> {
     let mut interner = SymbolTable::new();
     let lexer = Lexer::new(source_file, &mut interner);
     let tokens: Vec<_> = lexer.collect::<LexerResult<Vec<_>>>()?;
@@ -38,12 +40,23 @@ pub fn compile(source_file: &SourceFile, only_lex: bool) -> anyhow::Result<()> {
         }
     }
 
-    if !only_lex {
+    let prog = if !only_lex {
         let mut used_tokens = vec![false; tokens.len()];
         let mut parser = Parser::new(&tokens, &mut used_tokens);
 
         let prog = parser.parse()?;
         println!("{:#?}", prog);
+        prog
+    } else {
+        return Ok(());
+    };
+
+    if !only_parse {
+        let mut asm_gen = AsmGen::new();
+        let asm_program = asm_gen.generate(&prog);
+        println!("{:?}", asm_program);
+
+        println!("{}", asm_program.to_string());
     }
     Ok(())
 }
