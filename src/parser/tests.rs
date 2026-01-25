@@ -2,8 +2,10 @@ use super::*;
 
 use crate::ast::ASTRefVisitor;
 use crate::ast::{expr::ExprRefVisitor, stmt::StmtRefVisitor};
-use crate::lexer::LexerResult;
+use crate::lexer::{Lexer, LexerResult};
 use crate::parser;
+use crate::source_file::SourceFile;
+use crate::symbol::SymbolTable;
 use insta::assert_yaml_snapshot;
 use serde_json::{Value, json};
 

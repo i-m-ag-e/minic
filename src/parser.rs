@@ -8,19 +8,13 @@ use crate::source_file::SourcePosition;
 use crate::symbol::Symbol;
 use anyhow::Result;
 use parser_error::{ParserError, ParserErrorType};
-use serde::Serialize;
 
 use crate::{
-    lexer::{
-        Lexer,
-        token::{Token, TokenType},
-    },
-    source_file::SourceFile,
-    symbol::SymbolTable,
+    lexer::token::{Token, TokenType},
     with_token::WithToken,
 };
 
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 pub struct Parser<'a> {
     tokens: &'a [Token],
     index: usize,

@@ -2,14 +2,14 @@ use serde::Serialize;
 
 use crate::{source_file::SourcePosition, symbol::Symbol};
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     Integer(i64),
     Float(f64),
     Bool(bool),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TokenType {
     // punctuation
     Comma,
@@ -72,7 +72,7 @@ pub enum TokenType {
     Eof,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     pub token_type: TokenType,
     pub begin: SourcePosition,
