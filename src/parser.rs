@@ -8,6 +8,7 @@ use crate::source_file::SourcePosition;
 use crate::symbol::Symbol;
 use anyhow::Result;
 use parser_error::{ParserError, ParserErrorType};
+use serde::Serialize;
 
 use crate::{
     lexer::{
@@ -19,11 +20,12 @@ use crate::{
     with_token::WithToken,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct Parser<'a> {
     tokens: &'a [Token],
     index: usize,
     used_tokens: &'a mut Vec<bool>,
+    used_count: usize,
 }
 
 pub type ParseResult<T> = Result<T, ParserError>;
@@ -34,7 +36,34 @@ impl<'a> Parser<'a> {
             tokens,
             index: 0,
             used_tokens,
+            used_count: 0,
         }
+    }
+
+    fn save_previous(&mut self) -> usize {
+        let uc = self.used_count;
+        if self.index > 0 && self.index - 1 < self.used_tokens.len() {
+            self.used_tokens[self.index - 1] = true;
+            self.used_count += 1;
+        }
+        uc
+    }
+
+    fn save_and_advance(&mut self) -> Option<usize> {
+        let token = self.advance();
+        if token.is_some() {
+            Some(self.save_previous())
+        } else {
+            None
+        }
+    }
+
+    pub fn filter_saved_tokens(tokens: Vec<Token>, used_tokens: &'a mut Vec<bool>) -> Vec<Token> {
+        tokens
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, tok)| if used_tokens[i] { Some(tok) } else { None })
+            .collect()
     }
 
     fn is_at_end(&self) -> bool {
@@ -167,6 +196,7 @@ impl<'a> Parser<'a> {
                 found: error.clone(),
             },
         )?;
+        let func_name = self.save_previous();
 
         self.consume(&TokenType::LeftParen)?;
         self.consume(&TokenType::KVoid)?;
@@ -183,7 +213,7 @@ impl<'a> Parser<'a> {
         }
 
         Ok(FunctionDef {
-            name: "main".to_string(),
+            name: WithToken::new("main".to_string(), func_name),
             body: Some(body),
         })
     }
@@ -224,8 +254,10 @@ impl<'a> Parser<'a> {
     fn parse_literal(&mut self) -> ParseResult<Expr> {
         if let Some(TokenType::Literal(lit @ Literal::Integer(_))) = self.peek_token_type() {
             let lit = lit.clone();
-            self.advance().unwrap();
-            Ok(Expr::Constant(WithToken::new(lit, self.index - 1)))
+            Ok(Expr::Constant(WithToken::new(
+                lit,
+                self.save_and_advance().unwrap(),
+            )))
         } else {
             Err(ParserError {
                 err_type: ParserErrorType::ExpectedAnother {
@@ -240,3 +272,6 @@ impl<'a> Parser<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

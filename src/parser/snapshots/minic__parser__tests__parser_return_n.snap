@@ -1,0 +1,29 @@
+---
+source: src/parser/tests.rs
+expression: "test_string_success(\"int main(void) { return 42; }\")?"
+---
+type: Program
+function_defs:
+  - type: FunctionDef
+    name:
+      token_type: Identifier(Symbol(0))
+      lexeme: main
+      line_col_begin:
+        - 1
+        - 5
+      line_col_end:
+        - 1
+        - 9
+    body:
+      - type: ReturnStmt
+        expr:
+          type: Constant
+          token:
+            token_type: Literal(Integer(42))
+            lexeme: "42"
+            line_col_begin:
+              - 1
+              - 25
+            line_col_end:
+              - 1
+              - 27

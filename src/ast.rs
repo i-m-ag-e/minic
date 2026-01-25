@@ -1,12 +1,12 @@
 pub mod expr;
 pub mod stmt;
 
-use stmt::Stmt;
-
 use crate::ast::{
     expr::{ExprRefVisitor, ExprVisitor},
     stmt::{StmtRefVisitor, StmtVisitor},
 };
+use crate::with_token::WithToken;
+use stmt::Stmt;
 
 #[derive(Debug, Clone)]
 pub struct Program {
@@ -15,7 +15,7 @@ pub struct Program {
 
 #[derive(Debug, Clone)]
 pub struct FunctionDef {
-    pub name: String,
+    pub name: WithToken<String>,
     // pub params: Vec<String>,
     pub body: Option<Vec<Stmt>>,
 }

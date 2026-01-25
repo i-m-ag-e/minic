@@ -1,10 +1,12 @@
 use std::ops::{Add, Deref, Sub};
 
+use serde::Serialize;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourceFile {
-    filename: String,
-    content: String,
-    line_starts: Vec<usize>,
+    pub filename: String,
+    pub content: String,
+    pub line_starts: Vec<usize>,
 }
 
 impl SourceFile {
@@ -48,7 +50,7 @@ impl Deref for SourceFile {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct SourcePosition(pub usize);
 
 impl Add<usize> for SourcePosition {
