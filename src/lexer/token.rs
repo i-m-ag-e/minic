@@ -1,3 +1,5 @@
+use serde::Serialize;
+
 use crate::{source_file::SourcePosition, symbol::Symbol};
 
 #[derive(Debug, Clone, PartialEq)]

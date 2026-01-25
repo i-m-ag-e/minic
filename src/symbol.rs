@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use serde::Serialize;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct Symbol(pub usize);
 
 #[derive(Debug)]
