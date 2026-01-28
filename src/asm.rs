@@ -1,12 +1,8 @@
-use crate::{
-    ast::{
-        self, ASTRefVisitor,
-        expr::{BinaryExpr, Expr, ExprRefVisitor, UnaryExpr},
-        stmt::StmtRefVisitor,
-    },
-    lexer::token::Literal,
-    with_token::WithToken,
-};
+mod asm_gen;
+use std::fmt::Display;
+
+use crate::{ast::expr::UnaryOp, tacky::VarID};
+pub use asm_gen::tacky_to_asm;
 
 const INDENT: &str = "    ";
 
@@ -35,17 +31,18 @@ impl Program {
 #[derive(Debug, Clone)]
 pub struct FunctionDef {
     name: String,
-    body: Option<Vec<Instruction>>,
+    stack_size: i32,
+    body: Vec<Instruction>,
 }
 
 impl FunctionDef {
     fn to_string(&self) -> String {
         let mut func_str = format!("{}.globl {}\n", INDENT, self.name);
         func_str.push_str(&format!("{}:\n", self.name));
-        if let Some(body) = &self.body {
-            for instr in body {
-                func_str.push_str(&format!("{}{}\n", INDENT, instr.to_string()));
-            }
+        func_str.push_str(&format!("{}pushq %rbp\n", INDENT));
+        func_str.push_str(&format!("{}movq %rsp, %rbp\n", INDENT));
+        for instr in &self.body {
+            func_str.push_str(&format!("{}{}\n", INDENT, instr.to_string()));
         }
         func_str
     }
@@ -53,118 +50,90 @@ impl FunctionDef {
 
 #[derive(Debug, Clone)]
 pub enum Instruction {
+    AllocateStack(usize),
     Mov { src: Operand, dest: Operand },
     Ret,
+    Unary(UnaryOp, Operand),
 }
 
 impl Instruction {
-    fn to_string(&self) -> String {
-        match self {
-            Instruction::Mov { src, dest } => {
-                format!("movq\t\t{}, {}", src.to_string(), dest.to_string())
-            }
-            Instruction::Ret => "ret".to_string(),
+    fn unary_op_to_inst(op: &UnaryOp) -> &'static str {
+        match op {
+            UnaryOp::Negate => "negq",
+            UnaryOp::BitNot => "notq",
         }
+    }
+
+    fn to_string(&self) -> String {
+        let insts = match self {
+            Instruction::AllocateStack(n) => {
+                if *n > 0 {
+                    vec![format!("subq\t\t${}, %rsp", n)]
+                } else {
+                    vec![]
+                }
+            }
+            Instruction::Mov { src, dest } => {
+                vec![format!("movq\t\t{}, {}", src.to_string(), dest.to_string())]
+            }
+            Instruction::Ret => {
+                vec![
+                    format!("movq\t\t%rbp, %rsp"),
+                    format!("popq\t\t%rbp"),
+                    format!("ret"),
+                ]
+            }
+            Instruction::Unary(op, operand) => {
+                vec![format!(
+                    "{}\t\t{}",
+                    Self::unary_op_to_inst(op),
+                    operand.to_string()
+                )]
+            }
+        };
+        insts
+            .into_iter()
+            .enumerate()
+            .map(|(i, s)| if i > 0 { format!("{}{}", INDENT, s) } else { s })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum Operand {
     Imm(i64),
-    Register,
+    Pseudo(VarID),
+    Register(Register),
+    Stack(i32),
 }
 
 impl Operand {
     fn to_string(&self) -> String {
         match self {
             Operand::Imm(value) => format!("${}", value),
-            Operand::Register => "%rax".to_string(),
+            Operand::Pseudo(var) => format!("pseudo.{}", var),
+            Operand::Register(reg) => reg.to_string(),
+            Operand::Stack(n) => format!("{}(%rbp)", n),
         }
     }
 }
-pub struct AsmGen {
-    pub current_body: Vec<Instruction>,
+
+#[derive(Debug, Clone, Copy)]
+pub enum Register {
+    AX,
+    R10,
 }
 
-impl AsmGen {
-    pub fn new() -> Self {
-        Self {
-            current_body: Vec::new(),
-        }
-    }
-
-    pub fn generate(&mut self, program: &ast::Program) -> Program {
-        self.visit_program(program)
-    }
-
-    fn add_instruction(&mut self, instr: Instruction) {
-        self.current_body.push(instr);
-    }
-}
-
-impl ExprRefVisitor<Operand> for AsmGen {
-    fn visit_binary_expr(&mut self, expr: &BinaryExpr) -> Operand {
-        unimplemented!()
-    }
-
-    fn visit_group_expr(&mut self, expr: &WithToken<Expr>) -> Operand {
-        unimplemented!()
-    }
-
-    fn visit_unary_expr(&mut self, expr: &UnaryExpr) -> Operand {
-        unimplemented!()
-    }
-
-    fn visit_constant(&mut self, expr: &WithToken<Literal>) -> Operand {
-        let value = match expr.item {
-            Literal::Integer(i) => i,
-            _ => panic!("Unsupported literal for assembly generation"),
+impl Display for Register {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let reg_str = match self {
+            Register::AX => "%rax",
+            Register::R10 => "%r10",
         };
-        Operand::Imm(value)
+        write!(f, "{}", reg_str)
     }
 }
 
-impl StmtRefVisitor<()> for AsmGen {
-    fn visit_expr_stmt(&mut self, stmt: &Expr) -> () {
-        unimplemented!()
-    }
-
-    fn visit_return_stmt(&mut self, stmt: &Option<Expr>) -> () {
-        if let Some(expr) = stmt {
-            let op = self.visit_expr(expr);
-            self.add_instruction(Instruction::Mov {
-                src: op,
-                dest: Operand::Register,
-            });
-        }
-        self.add_instruction(Instruction::Ret);
-    }
-}
-
-impl ASTRefVisitor for AsmGen {
-    type StmtResult = ();
-    type ExprResult = Operand;
-    type ProgramResult = Program;
-    type FunctionDefResult = ();
-
-    fn visit_program(&mut self, program: &ast::Program) -> Self::ProgramResult {
-        for func_def in &program.function_defs {
-            self.visit_function_def(func_def);
-        }
-        let mut prog = Program::new();
-        prog.function_defs.push(FunctionDef {
-            name: "main".to_string(),
-            body: Some(self.current_body.clone()),
-        });
-        prog
-    }
-
-    fn visit_function_def(&mut self, func_def: &ast::FunctionDef) -> Self::StmtResult {
-        self.current_body.clear();
-        if let Some(body) = &func_def.body {
-            for stmt in body {
-                self.visit_stmt(stmt);
-            }
-        }
-    }
-}
+#[cfg(test)]
+mod asm_tests;

@@ -1,0 +1,9 @@
+<program>       ::= <function>+ 
+
+<function>      ::= "int" <IDENTIFIER> "(" "void" ")" "{" <statement>* "}"
+
+<statement>     ::= "return" <expression> ";"
+
+<expression>    ::= <INT> | <unary_op> <expression> | "(" <expression> ")"
+
+<unary_op>      ::= "-" | "~"

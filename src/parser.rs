@@ -1,7 +1,7 @@
 pub mod parser_error;
 
 use crate::ast::FunctionDef;
-use crate::ast::expr::Expr;
+use crate::ast::expr::{Expr, UnaryExpr, UnaryOp};
 use crate::ast::{Program, stmt::Stmt};
 use crate::lexer::token::Literal;
 use crate::source_file::SourcePosition;
@@ -242,16 +242,26 @@ impl<'a> Parser<'a> {
 
 impl<'a> Parser<'a> {
     fn parse_expr(&mut self) -> ParseResult<Expr> {
-        self.parse_literal()
+        if self.is_at_end() {
+            return Err(self.make_eof());
+        }
+
+        match self.peek_token_type().unwrap() {
+            TokenType::Literal(_) => self.parse_literal(),
+            TokenType::Minus | TokenType::BitNot => self.parse_unary_expr(),
+            TokenType::LeftParen => self.parse_grouped_expr(),
+            tt => Err(ParserError {
+                err_type: ParserErrorType::UnexpectedToken(tt.clone()),
+                span: self.peek().map(|t| (t.begin, t.end)).unwrap(),
+            }),
+        }
     }
 
     fn parse_literal(&mut self) -> ParseResult<Expr> {
         if let Some(TokenType::Literal(lit @ Literal::Integer(_))) = self.peek_token_type() {
             let lit = lit.clone();
-            Ok(Expr::Constant(WithToken::new(
-                lit,
-                self.save_and_advance().unwrap(),
-            )))
+            let n = self.save_and_advance().unwrap();
+            Ok(Expr::Constant(WithToken::new(lit, n)))
         } else {
             Err(ParserError {
                 err_type: ParserErrorType::ExpectedAnother {
@@ -265,7 +275,36 @@ impl<'a> Parser<'a> {
             })
         }
     }
+
+    fn unary_op_from_token(token: &Token) -> ParseResult<UnaryOp> {
+        match &token.token_type {
+            TokenType::Minus => Ok(UnaryOp::Negate),
+            TokenType::BitNot => Ok(UnaryOp::BitNot),
+            _ => Err(ParserError {
+                err_type: ParserErrorType::UnexpectedToken(token.token_type.clone()),
+                span: (token.begin, token.end),
+            }),
+        }
+    }
+
+    fn parse_unary_expr(&mut self) -> ParseResult<Expr> {
+        let operator = Self::unary_op_from_token(self.peek().unwrap())?;
+        let operator_token_index = self.save_and_advance().unwrap();
+
+        let operand = self.parse_expr()?;
+        Ok(Expr::Unary(UnaryExpr {
+            operator: WithToken::new(operator, operator_token_index),
+            operand: Box::new(operand),
+        }))
+    }
+
+    fn parse_grouped_expr(&mut self) -> ParseResult<Expr> {
+        self.consume(&TokenType::LeftParen)?;
+        let expr = self.parse_expr()?;
+        self.consume(&TokenType::RightParen)?;
+        Ok(expr)
+    }
 }
 
 #[cfg(test)]
-mod tests;
+mod parser_tests;

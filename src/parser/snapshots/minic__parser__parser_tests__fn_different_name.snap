@@ -1,0 +1,29 @@
+---
+source: src/parser/parser_tests.rs
+expression: "test_string_success(\"int foo(void) { return 1; }\")?"
+---
+type: Program
+function_defs:
+  - type: FunctionDef
+    name:
+      token_type: Identifier(Symbol(0))
+      lexeme: foo
+      line_col_begin:
+        - 1
+        - 5
+      line_col_end:
+        - 1
+        - 8
+    body:
+      - type: ReturnStmt
+        expr:
+          type: Constant
+          token:
+            token_type: Literal(Integer(1))
+            lexeme: "1"
+            line_col_begin:
+              - 1
+              - 24
+            line_col_end:
+              - 1
+              - 25

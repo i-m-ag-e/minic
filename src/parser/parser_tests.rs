@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::ast::ASTRefVisitor;
+use crate::ast::{ASTRefVisitor, expr};
 use crate::ast::{expr::ExprRefVisitor, stmt::StmtRefVisitor};
 use crate::lexer::{Lexer, LexerResult};
 use crate::parser;
@@ -32,10 +32,23 @@ impl<'a> JsonVisitor<'a> {
             "line_col_end": self.source.line_col(token.end.0),
         })
     }
+
+    fn visit_token_short(&self, token: &Token) -> Value {
+        json!(format!(
+            "(pos: {} - {}) ({}:{} - {}:{}) `{}`",
+            token.begin.0,
+            token.end.0,
+            self.source.line_col(token.begin.0).0,
+            self.source.line_col(token.begin.0).1,
+            self.source.line_col(token.end.0).0,
+            self.source.line_col(token.end.0).1,
+            self.source.content[token.begin.0..token.end.0].to_string()
+        ))
+    }
 }
 
 impl<'a> ExprRefVisitor<Value> for JsonVisitor<'a> {
-    fn visit_binary_expr(&mut self, expr: &crate::ast::expr::BinaryExpr) -> Value {
+    fn visit_binary_expr(&mut self, expr: &expr::BinaryExpr) -> Value {
         json!({
             "type": "BinaryExpr",
             "left": self.visit_expr(&expr.left),
@@ -51,18 +64,13 @@ impl<'a> ExprRefVisitor<Value> for JsonVisitor<'a> {
         })
     }
 
-    fn visit_group_expr(&mut self, expr: &WithToken<Expr>) -> Value {
-        json!({
-            "type": "GroupExpr",
-            "expr": self.visit_expr(&expr),
-        })
-    }
-
-    fn visit_unary_expr(&mut self, expr: &crate::ast::expr::UnaryExpr) -> Value {
+    fn visit_unary_expr(&mut self, expr: &expr::UnaryExpr) -> Value {
+        let op_token = self.visit_token_short(expr.operator.get_token(&self.tokens));
         json!({
             "type": "UnaryExpr",
-            "operator": format!("{:?}", expr.operator.token_type),
+            "operator": format!("{:?}", expr.operator.item),
             "operand": self.visit_expr(&expr.operand),
+            "operator_token": op_token,
         })
     }
 }
@@ -137,6 +145,12 @@ fn test_parser_no_return() -> anyhow::Result<()> {
 #[test]
 fn test_parser_return_n() -> anyhow::Result<()> {
     assert_yaml_snapshot!(test_string_success("int main(void) { return 42; }")?);
+    Ok(())
+}
+
+#[test]
+fn test_unary_expr() -> anyhow::Result<()> {
+    assert_yaml_snapshot!(test_string_success("int main(void) { return ~-~-1; }")?);
     Ok(())
 }
 

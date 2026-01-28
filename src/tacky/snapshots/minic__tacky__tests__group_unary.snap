@@ -1,0 +1,32 @@
+---
+source: src/tacky/tests.rs
+expression: "test_string_success(\"int main(void) { return -(-~-42); }\")?"
+---
+name: main
+body:
+  - Unary:
+      op: Negate
+      dest:
+        Var: 0
+      src:
+        Constant: 42
+  - Unary:
+      op: BitNot
+      dest:
+        Var: 1
+      src:
+        Var: 0
+  - Unary:
+      op: Negate
+      dest:
+        Var: 2
+      src:
+        Var: 1
+  - Unary:
+      op: Negate
+      dest:
+        Var: 3
+      src:
+        Var: 2
+  - Return:
+      Var: 3
