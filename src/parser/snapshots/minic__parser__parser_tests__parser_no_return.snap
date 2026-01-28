@@ -1,0 +1,17 @@
+---
+source: src/parser/parser_tests.rs
+expression: "test_string_success(\"int main(void) { }\")?"
+---
+type: Program
+function_defs:
+  - type: FunctionDef
+    name:
+      token_type: Identifier(Symbol(0))
+      lexeme: main
+      line_col_begin:
+        - 1
+        - 5
+      line_col_end:
+        - 1
+        - 9
+    body: []

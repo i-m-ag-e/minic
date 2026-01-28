@@ -253,6 +253,9 @@ impl<'a> Lexer<'a> {
             '*' => multi_char_tok!(self, TokenType::Asterisk;
                 '=' => TokenType::AsteriskAssign
             ),
+            '~' => multi_char_tok!(self, TokenType::BitNot;
+                '=' => TokenType::BitNotAssign
+            ),
             '|' => multi_char_tok!(self, TokenType::BitOr;
                 '|' => TokenType::Or,
                 '=' => TokenType::BitOrAssign
@@ -402,6 +405,7 @@ mod tests {
             "> >= ++ << <<= < <=",
             "- -= ! != || % %=",
             "+ += / >> >>= / /= ",
+            "~ ~=",
         ];
         let source = SourceFile::new("test_operators".to_string(), ops.join("\n").to_string());
         let mut symbol_table = SymbolTable::new();
@@ -441,6 +445,8 @@ mod tests {
             token!(TokenType::RightShiftAssign; 6::11::85 -> 6::14::88),
             token!(TokenType::Slash; 6::15::89 -> 6::16::90),
             token!(TokenType::SlashAssign; 6::17::91 -> 6::19::93),
+            token!(TokenType::BitNot; 7::1::95 -> 7::2::96),
+            token!(TokenType::BitNotAssign; 7::3::97 -> 7::5::99),
         ];
 
         test_tokens(expected_tokens, &source, &mut symbol_table, true);

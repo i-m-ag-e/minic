@@ -4,6 +4,7 @@ mod lexer;
 mod parser;
 pub mod source_file;
 mod symbol;
+mod tacky;
 mod with_token;
 
 use std::{fs, path::Path, process::Command};
@@ -18,7 +19,8 @@ pub use lexer::lexer_error;
 pub use parser::parser_error;
 
 use crate::{
-    asm::AsmGen,
+    asm::tacky_to_asm,
+    ast::ASTRefVisitor,
     lexer::{LexerResult, token::TokenType},
     parser::Parser,
     source_file::SourcePosition,
@@ -51,6 +53,10 @@ pub struct Cli {
     #[arg(long)]
     codegen: bool,
 
+    /// only generate tacky IR
+    #[arg(long)]
+    tacky: bool,
+
     /// only output assembly files
     #[arg(short = 'S', long)]
     only_assembly: bool,
@@ -60,11 +66,12 @@ pub fn assemble(
     source_file: &SourceFile,
     stop_at_lex: bool,
     stop_at_parse: bool,
+    stop_at_tacky: bool,
     stop_at_codegen: bool,
 ) -> anyhow::Result<String> {
     let mut interner = SymbolTable::new();
     let lexer = Lexer::new(source_file, &mut interner);
-    let tokens: Vec<_> = lexer.collect::<LexerResult<Vec<_>>>()?;
+    let mut tokens: Vec<_> = lexer.collect::<LexerResult<Vec<_>>>()?;
     for token in &tokens {
         let lexeme = &source_file[token.begin.0..token.end.0];
         let line_col_start = source_file.line_col(token.begin.0);
@@ -86,24 +93,35 @@ pub fn assemble(
         let mut parser = Parser::new(&tokens, &mut used_tokens);
 
         let prog = parser.parse()?;
+        tokens = Parser::filter_saved_tokens(tokens, &mut used_tokens);
         println!("{:#?}", prog);
         prog
     } else {
         return Ok(String::new());
     };
 
-    if !stop_at_parse {
-        let mut asm_gen = AsmGen::new();
-        let asm_program = asm_gen.generate(&prog);
-        println!("{:?}", asm_program);
+    let tacky_prog = if !stop_at_parse {
+        let mut tacky_gen = tacky::tacky_gen::TackyGen::new();
+        let tacky_prog = tacky_gen.visit_program(&prog);
+        println!("{:#?}", tacky_prog);
+        tacky_prog
+    } else {
+        return Ok(String::new());
+    };
 
-        if !stop_at_codegen {
-            let asm_code = asm_program.to_string();
-            println!("{}", asm_code);
-            return Ok(asm_code);
-        }
+    let asm_program = if !stop_at_tacky {
+        let asm_program = tacky_to_asm(&tacky_prog);
+        println!("{:#?}", asm_program);
+        asm_program
+    } else {
+        return Ok(String::new());
+    };
+
+    if !stop_at_codegen {
+        let asm_code = asm_program.to_string();
+        println!("{}", asm_code);
+        return Ok(asm_code);
     }
-
     Ok(String::new())
 }
 
@@ -157,8 +175,6 @@ pub fn compile(cli: &Cli) -> anyhow::Result<()> {
         .map(|file| {
             Ok(Path::new(file)
                 .with_extension("s")
-                .file_name()
-                .ok_or(anyhow::anyhow!("invalid path: {}", file))?
                 .to_str()
                 .ok_or(anyhow::anyhow!("invalid characters in file path"))?
                 .to_owned())
@@ -169,10 +185,10 @@ pub fn compile(cli: &Cli) -> anyhow::Result<()> {
         let content = fs::read_to_string(source_file)
             .map_err(|e| anyhow::anyhow!("Failed to read file `{}`: {}", source_file, e))?;
         let source = SourceFile::new(source_file.clone(), content);
-        let asm = assemble(&source, cli.lex, cli.parse, cli.codegen)
+        let asm = assemble(&source, cli.lex, cli.parse, cli.tacky, cli.codegen)
             .map_err(|e| handle_compile_error(e, &source))?;
 
-        if cli.lex || cli.parse || cli.codegen {
+        if cli.lex || cli.parse || cli.tacky || cli.codegen {
             continue;
         }
 
@@ -180,18 +196,26 @@ pub fn compile(cli: &Cli) -> anyhow::Result<()> {
             .map_err(|e| anyhow::anyhow!("Failed to write assembly file `{}`: {}", asm_file, e))?;
     }
 
-    if cli.lex || cli.parse || cli.codegen || cli.only_assembly {
+    if cli.lex || cli.parse || cli.tacky || cli.codegen || cli.only_assembly {
         return Ok(());
     }
 
     let mut options = vec![];
     if cli.object_file {
-        options.push("-c");
+        options.push("-c".to_owned());
     }
 
     if let Some(ref output) = cli.output {
-        options.push("-o");
-        options.push(output);
+        options.push("-o".to_owned());
+        options.push(output.to_owned());
+    } else if asm_files.len() == 1 {
+        let output_file = Path::new(&asm_files[0])
+            .with_extension("")
+            .to_str()
+            .ok_or(anyhow::anyhow!("invalid characters in file path"))?
+            .to_owned();
+        options.push("-o".to_owned());
+        options.push(output_file);
     }
 
     let status = Command::new("gcc")

@@ -1,5 +1,3 @@
-use serde::Serialize;
-
 use crate::{source_file::SourcePosition, symbol::Symbol};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -29,6 +27,8 @@ pub enum TokenType {
     AsteriskAssign,
     BitAnd,
     BitAndAssign,
+    BitNot,
+    BitNotAssign,
     BitOr,
     BitOrAssign,
     BitXor,

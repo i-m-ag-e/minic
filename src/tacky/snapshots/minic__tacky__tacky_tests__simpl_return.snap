@@ -1,0 +1,8 @@
+---
+source: src/tacky/tacky_tests.rs
+expression: "test_string_success(\"int main(void) { return 0; }\")?"
+---
+name: main
+body:
+  - Return:
+      Constant: 0
