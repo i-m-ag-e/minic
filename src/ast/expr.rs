@@ -12,11 +12,25 @@ pub enum Expr {
     Unary(UnaryExpr),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+pub enum BinaryOp {
+    Add,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Divide,
+    LeftShift,
+    Modulus,
+    Multiply,
+    RightShift,
+    Subtract,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryExpr {
-    pub left: Box<WithToken<Expr>>,
-    pub operator: Token,
-    pub right: Box<WithToken<Expr>>,
+    pub left: Box<Expr>,
+    pub operator: WithToken<BinaryOp>,
+    pub right: Box<Expr>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]

@@ -1,7 +1,10 @@
 mod asm_gen;
 use std::fmt::Display;
 
-use crate::{ast::expr::UnaryOp, tacky::VarID};
+use crate::{
+    ast::expr::{BinaryOp, UnaryOp},
+    tacky::VarID,
+};
 pub use asm_gen::tacky_to_asm;
 
 const INDENT: &str = "    ";
@@ -51,7 +54,17 @@ impl FunctionDef {
 #[derive(Debug, Clone)]
 pub enum Instruction {
     AllocateStack(usize),
-    Mov { src: Operand, dest: Operand },
+    Binary {
+        op: BinaryOp,
+        src: Operand,
+        dest: Operand,
+    },
+    Cqo,
+    Idiv(Operand),
+    Mov {
+        src: Operand,
+        dest: Operand,
+    },
     Ret,
     Unary(UnaryOp, Operand),
 }
@@ -64,6 +77,21 @@ impl Instruction {
         }
     }
 
+    fn binary_op_to_inst(op: &BinaryOp) -> &'static str {
+        match op {
+            BinaryOp::Add => "addq",
+            BinaryOp::Subtract => "subq",
+            BinaryOp::Multiply => "imulq",
+            BinaryOp::Divide => "idivq",
+            BinaryOp::Modulus => "idivq",
+            BinaryOp::BitAnd => "andq",
+            BinaryOp::BitOr => "orq",
+            BinaryOp::BitXor => "xorq",
+            BinaryOp::LeftShift => "shlq",
+            BinaryOp::RightShift => "shrq",
+        }
+    }
+
     fn to_string(&self) -> String {
         let insts = match self {
             Instruction::AllocateStack(n) => {
@@ -73,6 +101,14 @@ impl Instruction {
                     vec![]
                 }
             }
+            Instruction::Binary { op, src, dest } => vec![format!(
+                "{}\t\t{}, {}",
+                Self::binary_op_to_inst(op),
+                src.to_string(),
+                dest.to_string()
+            )],
+            Instruction::Cqo => vec!["cqo".to_string()],
+            Instruction::Idiv(operand) => vec![format!("idivq\t\t{}", operand.to_string())],
             Instruction::Mov { src, dest } => {
                 vec![format!("movq\t\t{}, {}", src.to_string(), dest.to_string())]
             }
@@ -122,14 +158,22 @@ impl Operand {
 #[derive(Debug, Clone, Copy)]
 pub enum Register {
     AX,
+    CL,
+    CX,
+    DX,
     R10,
+    R11,
 }
 
 impl Display for Register {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let reg_str = match self {
             Register::AX => "%rax",
+            Register::CL => "%cl",
+            Register::CX => "%rcx",
+            Register::DX => "%rdx",
             Register::R10 => "%r10",
+            Register::R11 => "%r11",
         };
         write!(f, "{}", reg_str)
     }

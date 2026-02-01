@@ -34,7 +34,16 @@ impl TackyGen {
 
 impl ExprRefVisitor<Value> for TackyGen {
     fn visit_binary_expr(&mut self, expr: &expr::BinaryExpr) -> Value {
-        unimplemented!()
+        let left_val = self.visit_expr(&expr.left);
+        let right_val = self.visit_expr(&expr.right);
+        let dest_var = self.make_var();
+        self.current_body.push(Instruction::Binary {
+            op: expr.operator.item,
+            dest: dest_var.clone(),
+            left: left_val,
+            right: right_val,
+        });
+        dest_var
     }
 
     fn visit_constant(&mut self, expr: &WithToken<Literal>) -> Value {

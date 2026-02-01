@@ -12,6 +12,8 @@ pub enum LexerErrorType {
     UnterminatedString,
     #[error("Invalid number literal")]
     InvalidNumberLiteral,
+    #[error("Unterminated comment")]
+    UnterminatedComment,
 }
 
 #[derive(Debug, Error, Clone)]

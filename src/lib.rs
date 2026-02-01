@@ -2,6 +2,7 @@ mod asm;
 mod ast;
 mod lexer;
 mod parser;
+mod pretty_print;
 pub mod source_file;
 mod symbol;
 mod tacky;
@@ -94,7 +95,10 @@ pub fn assemble(
 
         let prog = parser.parse()?;
         tokens = Parser::filter_saved_tokens(tokens, &mut used_tokens);
-        println!("{:#?}", prog);
+
+        let mut pretty_printer = pretty_print::PrettyPrinter::new();
+        pretty_printer.visit_program(&prog);
+        // println!("{:#?}", prog);
         prog
     } else {
         return Ok(String::new());

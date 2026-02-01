@@ -1,18 +1,46 @@
 pub mod parser_error;
 
 use crate::ast::FunctionDef;
-use crate::ast::expr::{Expr, UnaryExpr, UnaryOp};
+use crate::ast::expr::{BinaryExpr, BinaryOp, Expr, UnaryExpr, UnaryOp};
 use crate::ast::{Program, stmt::Stmt};
 use crate::lexer::token::Literal;
 use crate::source_file::SourcePosition;
 use crate::symbol::Symbol;
 use anyhow::Result;
+use lazy_static::lazy_static;
 use parser_error::{ParserError, ParserErrorType};
 
 use crate::{
     lexer::token::{Token, TokenType},
     with_token::WithToken,
 };
+
+macro_rules! hash_map {
+    ($($key:expr => $value:expr),* $(,)?) => {
+        {
+            let mut map = std::collections::HashMap::new();
+            $(
+                map.insert($key, $value);
+            )*
+            map
+        }
+    };
+}
+
+lazy_static! {
+    static ref BINARY_OPS_PRECEDENCE: std::collections::HashMap<BinaryOp, u8> = hash_map! {
+        BinaryOp::BitOr => 70,
+        BinaryOp::BitXor => 75,
+        BinaryOp::BitAnd => 80,
+        BinaryOp::LeftShift => 95,
+        BinaryOp::RightShift => 95,
+        BinaryOp::Add => 100,
+        BinaryOp::Subtract => 100,
+        BinaryOp::Divide => 105,
+        BinaryOp::Modulus => 105,
+        BinaryOp::Multiply => 105,
+    };
+}
 
 #[derive(Debug)]
 pub struct Parser<'a> {
@@ -242,6 +270,49 @@ impl<'a> Parser<'a> {
 
 impl<'a> Parser<'a> {
     fn parse_expr(&mut self) -> ParseResult<Expr> {
+        self.parse_expr_with_precedence(0)
+    }
+
+    fn parse_expr_with_precedence(&mut self, min_prec: u8) -> ParseResult<Expr> {
+        let mut left = self.parse_factor()?;
+        while let Ok(binop) = Self::binary_op_from_token(self.peek().unwrap())
+            && BINARY_OPS_PRECEDENCE.get(&binop).copied().unwrap_or(0) >= min_prec
+        {
+            let operator = Self::binary_op_from_token(self.peek().unwrap())?;
+            let operator_token_index = self.save_and_advance().unwrap();
+
+            let prec = BINARY_OPS_PRECEDENCE.get(&binop).copied().unwrap_or(0);
+            let right = self.parse_expr_with_precedence(prec + 1)?;
+            let binary_expr = BinaryExpr {
+                left: Box::new(left),
+                operator: WithToken::new(operator, operator_token_index),
+                right: Box::new(right),
+            };
+            left = Expr::Binary(binary_expr);
+        }
+        Ok(left)
+    }
+
+    fn binary_op_from_token(token: &Token) -> ParseResult<BinaryOp> {
+        match &token.token_type {
+            TokenType::Asterisk => Ok(BinaryOp::Multiply),
+            TokenType::BitAnd => Ok(BinaryOp::BitAnd),
+            TokenType::BitOr => Ok(BinaryOp::BitOr),
+            TokenType::BitXor => Ok(BinaryOp::BitXor),
+            TokenType::LeftShift => Ok(BinaryOp::LeftShift),
+            TokenType::Minus => Ok(BinaryOp::Subtract),
+            TokenType::Percent => Ok(BinaryOp::Modulus),
+            TokenType::Plus => Ok(BinaryOp::Add),
+            TokenType::RightShift => Ok(BinaryOp::RightShift),
+            TokenType::Slash => Ok(BinaryOp::Divide),
+            _ => Err(ParserError {
+                err_type: ParserErrorType::UnexpectedToken(token.token_type.clone()),
+                span: (token.begin, token.end),
+            }),
+        }
+    }
+
+    fn parse_factor(&mut self) -> ParseResult<Expr> {
         if self.is_at_end() {
             return Err(self.make_eof());
         }
@@ -291,7 +362,7 @@ impl<'a> Parser<'a> {
         let operator = Self::unary_op_from_token(self.peek().unwrap())?;
         let operator_token_index = self.save_and_advance().unwrap();
 
-        let operand = self.parse_expr()?;
+        let operand = self.parse_factor()?;
         Ok(Expr::Unary(UnaryExpr {
             operator: WithToken::new(operator, operator_token_index),
             operand: Box::new(operand),

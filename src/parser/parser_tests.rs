@@ -35,13 +35,14 @@ impl<'a> JsonVisitor<'a> {
 
     fn visit_token_short(&self, token: &Token) -> Value {
         json!(format!(
-            "(pos: {} - {}) ({}:{} - {}:{}) `{}`",
+            "(pos: {} - {}) ({}:{} - {}:{}) {:?} `{}`",
             token.begin.0,
             token.end.0,
             self.source.line_col(token.begin.0).0,
             self.source.line_col(token.begin.0).1,
             self.source.line_col(token.end.0).0,
             self.source.line_col(token.end.0).1,
+            token.token_type,
             self.source.content[token.begin.0..token.end.0].to_string()
         ))
     }
@@ -50,24 +51,24 @@ impl<'a> JsonVisitor<'a> {
 impl<'a> ExprRefVisitor<Value> for JsonVisitor<'a> {
     fn visit_binary_expr(&mut self, expr: &expr::BinaryExpr) -> Value {
         json!({
-            "type": "BinaryExpr",
+            "type": format!("BinaryExpr({:?})", *expr.operator),
+            "operator": self.visit_token_short(expr.operator.get_token(&self.tokens)),
             "left": self.visit_expr(&expr.left),
-            "operator": format!("{:?}", expr.operator.token_type),
             "right": self.visit_expr(&expr.right),
         })
     }
 
     fn visit_constant(&mut self, expr: &WithToken<Literal>) -> Value {
         json!({
-            "type": "Constant",
-            "token": self.visit_token(expr.get_token(&self.tokens)),
+            "type": format!("Constant({:?})", expr.item),
+            "token": self.visit_token_short(expr.get_token(&self.tokens)),
         })
     }
 
     fn visit_unary_expr(&mut self, expr: &expr::UnaryExpr) -> Value {
         let op_token = self.visit_token_short(expr.operator.get_token(&self.tokens));
         json!({
-            "type": "UnaryExpr",
+            "type": format!("UnaryExpr({:?})", expr.operator.item),
             "operator": format!("{:?}", expr.operator.item),
             "operand": self.visit_expr(&expr.operand),
             "operator_token": op_token,
@@ -107,7 +108,7 @@ impl<'a> ASTRefVisitor for JsonVisitor<'a> {
     fn visit_function_def(&mut self, func_def: &FunctionDef) -> Self::FunctionDefResult {
         json!({
             "type": "FunctionDef",
-            "name": self.visit_token(func_def.name.get_token(&self.tokens)),
+            "name": self.visit_token_short(func_def.name.get_token(&self.tokens)),
             "body": func_def.body.as_ref().map(|stmts| stmts.iter().map(|s| self.visit_stmt(s)).collect::<Vec<_>>()),
         })
     }
@@ -152,6 +153,66 @@ fn test_parser_return_n() -> anyhow::Result<()> {
 fn test_unary_expr() -> anyhow::Result<()> {
     assert_yaml_snapshot!(test_string_success("int main(void) { return ~-~-1; }")?);
     Ok(())
+}
+
+mod test_binary_expr {
+    use super::*;
+
+    #[test]
+    fn test_binary_expr_prec_105() -> anyhow::Result<()> {
+        assert_yaml_snapshot!(test_string_success(
+            "int main(void) { return 1 * 10 / 5 % 3; }"
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn test_binary_expr_prec_100() -> anyhow::Result<()> {
+        assert_yaml_snapshot!(test_string_success("int main(void) { return 1 + 2 - 3; }")?);
+        Ok(())
+    }
+
+    #[test]
+    fn test_binary_expr_prec_95() -> anyhow::Result<()> {
+        assert_yaml_snapshot!(test_string_success(
+            "int main(void) { return 1 << 2 >> 3 << 4; }"
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn test_bitwise_and() -> anyhow::Result<()> {
+        assert_yaml_snapshot!(test_string_success("int main(void) { return 1 & 2 & 3; }")?);
+        Ok(())
+    }
+
+    #[test]
+    fn test_bitwise_xor() -> anyhow::Result<()> {
+        assert_yaml_snapshot!(test_string_success("int main(void) { return 1 ^ 2 ^ 3; }")?);
+        Ok(())
+    }
+
+    #[test]
+    fn test_bitwise_or() -> anyhow::Result<()> {
+        assert_yaml_snapshot!(test_string_success("int main(void) { return 1 | 2 | 3; }")?);
+        Ok(())
+    }
+
+    #[test]
+    fn test_bitwise_mix() -> anyhow::Result<()> {
+        assert_yaml_snapshot!(test_string_success(
+            "int main(void) { return 1 | 2 >> 4 ^ 3 << 3 & 4; }" // 1 | ((2 >> 4) ^ ((3 << 3) & 4))
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn test_binary_mix() -> anyhow::Result<()> {
+        assert_yaml_snapshot!(test_string_success(
+            "int main(void) { return 1 + 2 << 3 - 4 & 5 | 6 ^ 7 * 8 / 9 % 10; }" // (((1 + 2) << (3 - 4)) & 5) | (6 ^ (((7 * 8) / 9) % 10))
+        )?);
+        Ok(())
+    }
 }
 
 #[test]

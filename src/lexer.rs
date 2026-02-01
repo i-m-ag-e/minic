@@ -132,7 +132,7 @@ impl<'a> Lexer<'a> {
 }
 
 impl<'a> Lexer<'a> {
-    fn skip_whitespace_and_comments(&mut self) {
+    fn skip_whitespace_and_comments(&mut self) -> LexerResult<()> {
         while let Some(c) = self.cursor.peek() {
             if !c.is_whitespace() {
                 break;
@@ -148,9 +148,34 @@ impl<'a> Lexer<'a> {
                     }
                     self.cursor.advance();
                 }
-                self.skip_whitespace_and_comments();
+                self.skip_whitespace_and_comments()?;
+            } else if let Some('*') = self.cursor.peek_next() {
+                self.cursor.advance();
+                self.cursor.advance();
+
+                while let Some(c) = self.cursor.peek() {
+                    if c == '*' {
+                        if let Some('/') = self.cursor.peek_next() {
+                            self.cursor.advance(); // consume '*'
+                            self.cursor.advance(); // consume '/'
+                            break;
+                        }
+                    }
+                    self.cursor.advance();
+
+                    if self.cursor.is_at_end() {
+                        return Err(LexerError::new(
+                            self.token_start,
+                            self.cursor.position,
+                            LexerErrorType::UnterminatedComment,
+                        ));
+                    }
+                }
+                self.skip_whitespace_and_comments()?;
             }
         }
+
+        Ok(())
     }
 
     fn make_token(&self, tok_type: TokenType) -> Token {
@@ -220,7 +245,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn scan_next_token(&mut self) -> LexerResult<Token> {
-        self.skip_whitespace_and_comments();
+        self.skip_whitespace_and_comments()?;
         // println!("skipped ws");
         self.token_start = self.cursor.position;
 
