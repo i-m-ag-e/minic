@@ -1,7 +1,7 @@
 pub mod tacky_gen;
 use serde::Serialize;
 
-use crate::ast::expr::UnaryOp;
+use crate::ast::expr::{BinaryOp, UnaryOp};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Program(pub FunctionDef);
@@ -14,6 +14,20 @@ pub struct FunctionDef {
 
 #[derive(Debug, Clone, Serialize)]
 pub enum Instruction {
+    Binary {
+        op: BinaryOp,
+        dest: Value,
+        left: Value,
+        right: Value,
+    },
+    Copy {
+        dest: Value,
+        src: Value,
+    },
+    Jump(String),
+    JumpIfZero(Value, String),
+    JumpIfNotZero(Value, String),
+    Label(String),
     Return(Value),
     Unary {
         op: UnaryOp,

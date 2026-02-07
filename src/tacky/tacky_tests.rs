@@ -20,7 +20,7 @@ fn test_string_success(s: &str) -> anyhow::Result<Program> {
     let prog = parser.parse()?;
     tokens = Parser::filter_saved_tokens(tokens, &mut used_tokens);
 
-    let mut tacky_gen = TackyGen::new();
+    let mut tacky_gen = TackyGen::new(&input);
     let tacky_prog = tacky_gen.visit_program(&prog);
     Ok(tacky_prog)
 }

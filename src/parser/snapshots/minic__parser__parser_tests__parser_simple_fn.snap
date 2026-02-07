@@ -5,25 +5,9 @@ expression: "test_string_success(\"int main(void) { return 0; }\")?"
 type: Program
 function_defs:
   - type: FunctionDef
-    name:
-      token_type: Identifier(Symbol(0))
-      lexeme: main
-      line_col_begin:
-        - 1
-        - 5
-      line_col_end:
-        - 1
-        - 9
+    name: "(pos: 4 - 8) (1:5 - 1:9) Identifier(Symbol(0)) `main`"
     body:
       - type: ReturnStmt
         expr:
-          type: Constant
-          token:
-            token_type: Literal(Integer(0))
-            lexeme: "0"
-            line_col_begin:
-              - 1
-              - 25
-            line_col_end:
-              - 1
-              - 26
+          type: Constant(Integer(0))
+          token: "(pos: 24 - 25) (1:25 - 1:26) Literal(Integer(0)) `0`"

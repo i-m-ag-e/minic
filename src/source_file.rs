@@ -2,11 +2,14 @@ use std::ops::{Add, Deref, Sub};
 
 use serde::Serialize;
 
+use crate::lexer::token::{Token, TokenID};
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourceFile {
     pub filename: String,
     pub content: String,
     pub line_starts: Vec<usize>,
+    pub tokens: Option<Vec<Token>>,
 }
 
 impl SourceFile {
@@ -22,6 +25,7 @@ impl SourceFile {
             filename,
             content,
             line_starts,
+            tokens: None,
         }
     }
 
@@ -39,6 +43,20 @@ impl SourceFile {
         }
         let col = pos - self.line_starts[line - 1] + 1;
         (line, col)
+    }
+
+    pub fn line_col_token_begin(&self, token_id: TokenID) -> (usize, usize) {
+        let token = &self.tokens.as_ref().expect("SourceFile::line_col_token_* should not be called before used tokens have been filtered and set")[token_id];
+        self.line_col(*token.begin)
+    }
+
+    pub fn line_col_token_end(&self, token_id: TokenID) -> (usize, usize) {
+        let token = &self.tokens.as_ref().expect("SourceFile::line_col_token_* should not be called before used tokens have been filtered and set")[token_id];
+        self.line_col(*token.end)
+    }
+
+    pub fn set_tokens(&mut self, tokens: Vec<Token>) {
+        self.tokens = Some(tokens);
     }
 }
 

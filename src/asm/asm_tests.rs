@@ -21,7 +21,7 @@ fn compile_to_asm_string(s: &str) -> anyhow::Result<String> {
     let ast_program = parser.parse()?;
     tokens = Parser::filter_saved_tokens(tokens, &mut used_tokens);
 
-    let mut tacky_gen = TackyGen::new();
+    let mut tacky_gen = TackyGen::new(&input);
     let tacky_prog = tacky_gen.visit_program(&ast_program);
 
     let asm_ast = tacky_to_asm(&tacky_prog);

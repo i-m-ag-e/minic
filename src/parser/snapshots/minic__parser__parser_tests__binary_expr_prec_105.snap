@@ -1,0 +1,39 @@
+---
+source: src/parser/parser_tests.rs
+expression: "test_string_success(\"int main(void) { return 1 * 10 / 5 % 3; }\")?"
+---
+type: Program
+function_defs:
+  - type: FunctionDef
+    name:
+      token_type: Identifier(Symbol(0))
+      lexeme: main
+      line_col_begin:
+        - 1
+        - 5
+      line_col_end:
+        - 1
+        - 9
+    body:
+      - type: ReturnStmt
+        expr:
+          type: BinaryExpr
+          left:
+            type: BinaryExpr
+            left:
+              type: BinaryExpr
+              left:
+                type: Constant
+                token: "(pos: 24 - 25) (1:25 - 1:26) Literal(Integer(1)) `1`"
+              operator: "WithToken { item: Multiply, token_id: 2 }"
+              right:
+                type: Constant
+                token: "(pos: 28 - 30) (1:29 - 1:31) Literal(Integer(10)) `10`"
+            operator: "WithToken { item: Divide, token_id: 4 }"
+            right:
+              type: Constant
+              token: "(pos: 33 - 34) (1:34 - 1:35) Literal(Integer(5)) `5`"
+          operator: "WithToken { item: Modulus, token_id: 6 }"
+          right:
+            type: Constant
+            token: "(pos: 37 - 38) (1:38 - 1:39) Literal(Integer(3)) `3`"

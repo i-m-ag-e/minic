@@ -1,0 +1,43 @@
+---
+source: src/parser/parser_tests.rs
+expression: "test_string_success(\"int main(void) { return 1 | 2 >> 4 ^ 3 << 3 & 4; }\")?"
+---
+type: Program
+function_defs:
+  - type: FunctionDef
+    name: "(pos: 4 - 8) (1:5 - 1:9) Identifier(Symbol(0)) `main`"
+    body:
+      - type: ReturnStmt
+        expr:
+          type: BinaryExpr(BitOr)
+          operator: "(pos: 26 - 27) (1:27 - 1:28) BitOr `|`"
+          left:
+            type: Constant(Integer(1))
+            token: "(pos: 24 - 25) (1:25 - 1:26) Literal(Integer(1)) `1`"
+          right:
+            type: BinaryExpr(BitXor)
+            operator: "(pos: 35 - 36) (1:36 - 1:37) BitXor `^`"
+            left:
+              type: BinaryExpr(RightShift)
+              operator: "(pos: 30 - 32) (1:31 - 1:33) RightShift `>>`"
+              left:
+                type: Constant(Integer(2))
+                token: "(pos: 28 - 29) (1:29 - 1:30) Literal(Integer(2)) `2`"
+              right:
+                type: Constant(Integer(4))
+                token: "(pos: 33 - 34) (1:34 - 1:35) Literal(Integer(4)) `4`"
+            right:
+              type: BinaryExpr(BitAnd)
+              operator: "(pos: 44 - 45) (1:45 - 1:46) BitAnd `&`"
+              left:
+                type: BinaryExpr(LeftShift)
+                operator: "(pos: 39 - 41) (1:40 - 1:42) LeftShift `<<`"
+                left:
+                  type: Constant(Integer(3))
+                  token: "(pos: 37 - 38) (1:38 - 1:39) Literal(Integer(3)) `3`"
+                right:
+                  type: Constant(Integer(3))
+                  token: "(pos: 42 - 43) (1:43 - 1:44) Literal(Integer(3)) `3`"
+              right:
+                type: Constant(Integer(4))
+                token: "(pos: 46 - 47) (1:47 - 1:48) Literal(Integer(4)) `4`"

@@ -1,15 +1,15 @@
 use std::ops::Deref;
 
-use crate::lexer::token::Token;
+use crate::lexer::token::{Token, TokenID};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WithToken<T> {
     pub item: T,
-    pub token_id: usize,
+    pub token_id: TokenID,
 }
 
 impl<T> WithToken<T> {
-    pub fn new(item: T, token_id: usize) -> Self {
+    pub fn new(item: T, token_id: TokenID) -> Self {
         Self {
             item: item,
             token_id,

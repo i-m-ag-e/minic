@@ -72,6 +72,8 @@ pub enum TokenType {
     Eof,
 }
 
+pub type TokenID = usize;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     pub token_type: TokenType,
