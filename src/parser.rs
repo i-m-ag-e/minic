@@ -29,9 +29,17 @@ macro_rules! hash_map {
 
 lazy_static! {
     static ref BINARY_OPS_PRECEDENCE: std::collections::HashMap<BinaryOp, u8> = hash_map! {
+        BinaryOp::Or => 60,
+        BinaryOp::And => 65,
         BinaryOp::BitOr => 70,
         BinaryOp::BitXor => 75,
         BinaryOp::BitAnd => 80,
+        BinaryOp::Equal => 85,
+        BinaryOp::NotEqual => 85,
+        BinaryOp::Greater => 90,
+        BinaryOp::GreaterEqual => 90,
+        BinaryOp::LessEqual => 90,
+        BinaryOp::LessThan => 90,
         BinaryOp::LeftShift => 95,
         BinaryOp::RightShift => 95,
         BinaryOp::Add => 100,
@@ -98,10 +106,6 @@ impl<'a> Parser<'a> {
 
     fn peek_token_type(&self) -> Option<&TokenType> {
         self.peek().map(|token| &token.token_type)
-    }
-
-    fn peek_forward(&self, n: usize) -> Option<&Token> {
-        self.tokens.get(self.index + n)
     }
 
     fn advance(&mut self) -> Option<&Token> {
@@ -171,10 +175,6 @@ impl<'a> Parser<'a> {
 
     fn advance_if_eq(&mut self, expected: &TokenType) -> Option<&Token> {
         self.advance_if(|token| &token.token_type == expected)
-    }
-
-    fn advance_if_one_of(&mut self, expected: &[TokenType]) -> Option<&Token> {
-        self.advance_if(|token| expected.contains(&token.token_type))
     }
 
     fn make_eof(&self) -> ParserError {
@@ -295,12 +295,20 @@ impl<'a> Parser<'a> {
 
     fn binary_op_from_token(token: &Token) -> ParseResult<BinaryOp> {
         match &token.token_type {
+            TokenType::And => Ok(BinaryOp::And),
             TokenType::Asterisk => Ok(BinaryOp::Multiply),
             TokenType::BitAnd => Ok(BinaryOp::BitAnd),
             TokenType::BitOr => Ok(BinaryOp::BitOr),
             TokenType::BitXor => Ok(BinaryOp::BitXor),
+            TokenType::DoubleEqual => Ok(BinaryOp::Equal),
+            TokenType::Greater => Ok(BinaryOp::Greater),
+            TokenType::GreaterEqual => Ok(BinaryOp::GreaterEqual),
             TokenType::LeftShift => Ok(BinaryOp::LeftShift),
+            TokenType::Less => Ok(BinaryOp::LessThan),
+            TokenType::LessEqual => Ok(BinaryOp::LessEqual),
             TokenType::Minus => Ok(BinaryOp::Subtract),
+            TokenType::NotEqual => Ok(BinaryOp::NotEqual),
+            TokenType::Or => Ok(BinaryOp::Or),
             TokenType::Percent => Ok(BinaryOp::Modulus),
             TokenType::Plus => Ok(BinaryOp::Add),
             TokenType::RightShift => Ok(BinaryOp::RightShift),
@@ -319,7 +327,7 @@ impl<'a> Parser<'a> {
 
         match self.peek_token_type().unwrap() {
             TokenType::Literal(_) => self.parse_literal(),
-            TokenType::Minus | TokenType::BitNot => self.parse_unary_expr(),
+            TokenType::Minus | TokenType::BitNot | TokenType::Not => self.parse_unary_expr(),
             TokenType::LeftParen => self.parse_grouped_expr(),
             tt => Err(ParserError {
                 err_type: ParserErrorType::UnexpectedToken(tt.clone()),
@@ -351,6 +359,7 @@ impl<'a> Parser<'a> {
         match &token.token_type {
             TokenType::Minus => Ok(UnaryOp::Negate),
             TokenType::BitNot => Ok(UnaryOp::BitNot),
+            TokenType::Not => Ok(UnaryOp::Not),
             _ => Err(ParserError {
                 err_type: ParserErrorType::UnexpectedToken(token.token_type.clone()),
                 span: (token.begin, token.end),

@@ -8,7 +8,11 @@ mod symbol;
 mod tacky;
 mod with_token;
 
-use std::{fs, path::Path, process::Command};
+use std::{
+    fs,
+    path::Path,
+    process::{Command, Stdio},
+};
 
 use anyhow::{self, bail};
 use clap;
@@ -64,7 +68,7 @@ pub struct Cli {
 }
 
 pub fn assemble(
-    source_file: &SourceFile,
+    source_file: &mut SourceFile,
     stop_at_lex: bool,
     stop_at_parse: bool,
     stop_at_tacky: bool,
@@ -72,7 +76,7 @@ pub fn assemble(
 ) -> anyhow::Result<String> {
     let mut interner = SymbolTable::new();
     let lexer = Lexer::new(source_file, &mut interner);
-    let mut tokens: Vec<_> = lexer.collect::<LexerResult<Vec<_>>>()?;
+    let tokens: Vec<_> = lexer.collect::<LexerResult<Vec<_>>>()?;
     for token in &tokens {
         let lexeme = &source_file[token.begin.0..token.end.0];
         let line_col_start = source_file.line_col(token.begin.0);
@@ -94,7 +98,7 @@ pub fn assemble(
         let mut parser = Parser::new(&tokens, &mut used_tokens);
 
         let prog = parser.parse()?;
-        tokens = Parser::filter_saved_tokens(tokens, &mut used_tokens);
+        source_file.set_tokens(Parser::filter_saved_tokens(tokens, &mut used_tokens));
 
         let mut pretty_printer = pretty_print::PrettyPrinter::new();
         pretty_printer.visit_program(&prog);
@@ -105,7 +109,7 @@ pub fn assemble(
     };
 
     let tacky_prog = if !stop_at_parse {
-        let mut tacky_gen = tacky::tacky_gen::TackyGen::new();
+        let mut tacky_gen = tacky::tacky_gen::TackyGen::new(source_file);
         let tacky_prog = tacky_gen.visit_program(&prog);
         println!("{:#?}", tacky_prog);
         tacky_prog
@@ -166,6 +170,26 @@ fn handle_compile_error(compile_err: anyhow::Error, source_file: &SourceFile) ->
     }
 }
 
+fn preprocess_source_file(file: &String, out_file: &String) -> anyhow::Result<SourceFile> {
+    let gcc = Command::new("gcc")
+        .arg("-E")
+        .arg(file)
+        .stdout(Stdio::piped())
+        .spawn()?;
+    let output = gcc.wait_with_output()?;
+    if !output.status.success() {
+        bail!("Preprocessing failed for file {}", file);
+    }
+
+    let output = String::from_utf8(output.stdout)?;
+    let output = output
+        .lines()
+        .skip_while(|line| line.starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(SourceFile::new(out_file.clone(), output))
+}
+
 pub fn compile(cli: &Cli) -> anyhow::Result<()> {
     // let asm = assemble(source_file, cli.lex, cli.parse, cli.codegen)?;
 
@@ -185,11 +209,22 @@ pub fn compile(cli: &Cli) -> anyhow::Result<()> {
         })
         .collect::<anyhow::Result<Vec<String>>>()?;
 
-    for (asm_file, source_file) in asm_files.iter().zip(&cli.files) {
-        let content = fs::read_to_string(source_file)
-            .map_err(|e| anyhow::anyhow!("Failed to read file `{}`: {}", source_file, e))?;
-        let source = SourceFile::new(source_file.clone(), content);
-        let asm = assemble(&source, cli.lex, cli.parse, cli.tacky, cli.codegen)
+    let pp_files = cli
+        .files
+        .iter()
+        .map(|file| {
+            Ok(Path::new(file)
+                .with_extension("i")
+                .to_str()
+                .ok_or(anyhow::anyhow!("invalid characters in file path"))?
+                .to_owned())
+        })
+        .collect::<anyhow::Result<Vec<String>>>()?;
+
+    for ((asm_file, pp_file), source_file) in asm_files.iter().zip(&pp_files).zip(&cli.files) {
+        let mut source = preprocess_source_file(source_file, pp_file)?;
+        println!("Source: {:?}", source);
+        let asm = assemble(&mut source, cli.lex, cli.parse, cli.tacky, cli.codegen)
             .map_err(|e| handle_compile_error(e, &source))?;
 
         if cli.lex || cli.parse || cli.tacky || cli.codegen {

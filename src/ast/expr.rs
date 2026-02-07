@@ -15,13 +15,21 @@ pub enum Expr {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum BinaryOp {
     Add,
+    And,
     BitAnd,
     BitOr,
     BitXor,
     Divide,
+    Equal,
+    Greater,
+    GreaterEqual,
     LeftShift,
+    LessEqual,
+    LessThan,
     Modulus,
     Multiply,
+    NotEqual,
+    Or,
     RightShift,
     Subtract,
 }
@@ -36,6 +44,7 @@ pub struct BinaryExpr {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub enum UnaryOp {
     Negate,
+    Not,
     BitNot,
 }
 

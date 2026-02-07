@@ -14,17 +14,25 @@ pub struct FunctionDef {
 
 #[derive(Debug, Clone, Serialize)]
 pub enum Instruction {
-    Return(Value),
-    Unary {
-        op: UnaryOp,
-        dest: Value,
-        src: Value,
-    },
     Binary {
         op: BinaryOp,
         dest: Value,
         left: Value,
         right: Value,
+    },
+    Copy {
+        dest: Value,
+        src: Value,
+    },
+    Jump(String),
+    JumpIfZero(Value, String),
+    JumpIfNotZero(Value, String),
+    Label(String),
+    Return(Value),
+    Unary {
+        op: UnaryOp,
+        dest: Value,
+        src: Value,
     },
 }
 

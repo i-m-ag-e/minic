@@ -24,15 +24,6 @@ impl<'a> JsonVisitor<'a> {
         }
     }
 
-    fn visit_token(&self, token: &Token) -> Value {
-        json!({
-            "token_type": format!("{:?}", token.token_type),
-            "lexeme": self.source.content[token.begin.0..token.end.0 ].to_string(),
-            "line_col_begin": self.source.line_col(token.begin.0),
-            "line_col_end": self.source.line_col(token.end.0),
-        })
-    }
-
     fn visit_token_short(&self, token: &Token) -> Value {
         json!(format!(
             "(pos: {} - {}) ({}:{} - {}:{}) {:?} `{}`",

@@ -1,6 +1,6 @@
 use crate::ast::{
     ASTRefVisitor,
-    expr::{BinaryOp, ExprRefVisitor},
+    expr::{BinaryOp, ExprRefVisitor, UnaryOp},
     stmt::StmtRefVisitor,
 };
 
@@ -22,13 +22,21 @@ impl ExprRefVisitor<()> for PrettyPrinter {
             " {} ",
             match expr.operator.item {
                 BinaryOp::Add => "+",
+                BinaryOp::And => "&&",
                 BinaryOp::BitAnd => "&",
                 BinaryOp::BitOr => "|",
                 BinaryOp::BitXor => "^",
                 BinaryOp::Divide => "/",
+                BinaryOp::Equal => "==",
+                BinaryOp::Greater => ">",
+                BinaryOp::GreaterEqual => ">=",
                 BinaryOp::LeftShift => "<<",
+                BinaryOp::LessEqual => "<=",
+                BinaryOp::LessThan => "<",
                 BinaryOp::Modulus => "%",
                 BinaryOp::Multiply => "*",
+                BinaryOp::NotEqual => "!=",
+                BinaryOp::Or => "||",
                 BinaryOp::RightShift => ">>",
                 BinaryOp::Subtract => "-",
             }
@@ -54,8 +62,9 @@ impl ExprRefVisitor<()> for PrettyPrinter {
         print!(
             "{}",
             match expr.operator.item {
-                crate::ast::expr::UnaryOp::Negate => "-",
-                crate::ast::expr::UnaryOp::BitNot => "~",
+                UnaryOp::Not => "!",
+                UnaryOp::Negate => "-",
+                UnaryOp::BitNot => "~",
             }
         );
         self.visit_expr(&expr.operand);
