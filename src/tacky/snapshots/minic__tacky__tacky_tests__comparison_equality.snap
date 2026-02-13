@@ -1,0 +1,43 @@
+---
+source: src/tacky/tacky_tests.rs
+expression: "test_string_success(\"int main(void) { return 1 == 1 && 2 != 3; }\")?"
+---
+name: main
+body:
+  - Binary:
+      op: Equal
+      dest:
+        Var: 0
+      left:
+        Constant: 1
+      right:
+        Constant: 1
+  - JumpIfZero:
+      - Var: 0
+      - and_false.1_32
+  - Binary:
+      op: NotEqual
+      dest:
+        Var: 1
+      left:
+        Constant: 2
+      right:
+        Constant: 3
+  - JumpIfZero:
+      - Var: 1
+      - and_false.1_32
+  - Copy:
+      dest:
+        Var: 2
+      src:
+        Constant: 1
+  - Jump: and_end.1_32
+  - Label: and_false.1_32
+  - Copy:
+      dest:
+        Var: 2
+      src:
+        Constant: 0
+  - Label: and_end.1_32
+  - Return:
+      Var: 2

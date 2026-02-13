@@ -10,23 +10,25 @@ use crate::{
 use anyhow;
 
 fn compile_to_asm_string(s: &str) -> anyhow::Result<String> {
-    let input = SourceFile::new("test_input.c".to_owned(), s.to_owned());
+    let mut input = SourceFile::new("test_input.c".to_owned(), s.to_owned());
     let mut symbol_table = SymbolTable::new();
 
     let lexer = Lexer::new(&input, &mut symbol_table);
-    let mut tokens = lexer.collect::<LexerResult<Vec<_>>>()?;
+    let tokens = lexer.collect::<LexerResult<Vec<_>>>()?;
 
     let mut used_tokens = vec![false; tokens.len()];
     let mut parser = Parser::new(&tokens, &mut used_tokens);
     let ast_program = parser.parse()?;
-    tokens = Parser::filter_saved_tokens(tokens, &mut used_tokens);
+    input.set_tokens(Parser::filter_saved_tokens(tokens, &mut used_tokens));
 
     let mut tacky_gen = TackyGen::new(&input);
     let tacky_prog = tacky_gen.visit_program(&ast_program);
 
     let asm_ast = tacky_to_asm(&tacky_prog);
 
-    Ok(asm_ast.to_string())
+    let mut asm_str = String::new();
+    asm_ast.to_asm_string(&mut asm_str, true)?;
+    Ok(asm_str)
 }
 
 fn parse_asm_to_vec(asm: &str) -> Vec<Vec<String>> {

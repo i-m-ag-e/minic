@@ -4,6 +4,7 @@ use std::fmt::Display;
 
 use crate::{
     ast::expr::{BinaryOp, UnaryOp},
+    debug_info::DebugInfo,
     tacky::VarID,
 };
 pub use asm_gen::tacky_to_asm;
@@ -22,13 +23,22 @@ impl Program {
         }
     }
 
-    pub fn to_string(&self) -> String {
-        let mut asm_str = String::new();
+    pub fn to_asm_string<W: std::fmt::Write>(
+        &self,
+        w: &mut W,
+        no_comments: bool,
+    ) -> std::fmt::Result {
         for func in &self.function_defs {
-            asm_str.push_str(&func.to_string());
+            func.to_asm_string(w, no_comments)?;
         }
-        asm_str.push_str("\n    .section .note.GNU-stack,\"\",@progbits\n");
-        asm_str
+        write!(w, "\n    .section .note.GNU-stack,\"\",@progbits\n")?;
+        Ok(())
+    }
+}
+
+impl Display for Program {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.to_asm_string(f, false)
     }
 }
 
@@ -40,20 +50,42 @@ pub struct FunctionDef {
 }
 
 impl FunctionDef {
-    fn to_string(&self) -> String {
-        let mut func_str = format!("{}.globl {}\n", INDENT, self.name);
-        func_str.push_str(&format!("{}:\n", self.name));
-        func_str.push_str(&format!("{}pushq %rbp\n", INDENT));
-        func_str.push_str(&format!("{}movq %rsp, %rbp\n", INDENT));
+    fn to_asm_string<W: std::fmt::Write>(&self, w: &mut W, no_comments: bool) -> std::fmt::Result {
+        write!(w, "{}.globl {}\n", INDENT, self.name)?;
+        write!(w, "{}:\n", self.name)?;
+        write!(w, "{}pushq %rbp\n", INDENT)?;
+        write!(w, "{}movq %rsp, %rbp\n", INDENT)?;
         for instr in &self.body {
-            func_str.push_str(&format!("{}\n", instr.to_string()));
+            let inst_str = if let InstructionKind::Label(_) = instr.kind {
+                format!("{}", instr.kind)
+            } else {
+                format!("{}{}", INDENT, instr.kind)
+            };
+
+            if !no_comments && !matches!(instr.kind, InstructionKind::Label(_)) {
+                write!(w, "{:<40}# {}\n", inst_str, instr.debug_info)?;
+            } else {
+                write!(w, "{}\n", inst_str)?;
+            }
         }
-        func_str
+        Ok(())
+    }
+}
+
+impl Display for FunctionDef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.to_asm_string(f, false)
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum Instruction {
+pub struct Instruction {
+    kind: InstructionKind,
+    debug_info: DebugInfo,
+}
+
+#[derive(Debug, Clone)]
+pub enum InstructionKind {
     AllocateStack(usize),
     Binary {
         op: BinaryOp,
@@ -75,7 +107,7 @@ pub enum Instruction {
     Unary(UnaryOp, Operand),
 }
 
-impl Instruction {
+impl InstructionKind {
     fn unary_op_to_inst(op: &UnaryOp) -> &'static str {
         match op {
             UnaryOp::Negate => "negq",
@@ -109,63 +141,61 @@ impl Instruction {
         }
     }
 
-    fn to_string(&self) -> String {
-        let (insts, indent) = match self {
-            Instruction::AllocateStack(n) => {
+    fn get_operands_mut(&mut self) -> Vec<&mut Operand> {
+        match self {
+            InstructionKind::Binary { src, dest, .. } => vec![src, dest],
+            InstructionKind::Cmp(lhs, rhs) => vec![lhs, rhs],
+            InstructionKind::Idiv(operand) => vec![operand],
+            InstructionKind::Mov { src, dest } => vec![src, dest],
+            InstructionKind::SetCC(_, operand) => vec![operand],
+            InstructionKind::Unary(_, operand) => vec![operand],
+            _ => vec![],
+        }
+    }
+}
+
+impl Display for InstructionKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InstructionKind::AllocateStack(n) => {
                 if *n > 0 {
-                    (vec![format!("subq\t\t${}, %rsp", n)], true)
+                    write!(f, "{:<10}\t\t${}, %rsp", "subq", n)
                 } else {
-                    (vec![], true)
+                    write!(f, "")
                 }
             }
-            Instruction::Binary { op, src, dest } => (
-                vec![format!(
-                    "{}\t\t{}, {}",
+            InstructionKind::Binary { op, src, dest } => {
+                write!(
+                    f,
+                    "{:<10}\t\t{}, {}",
                     Self::binary_op_to_inst(op),
-                    src.to_string(),
-                    dest.to_string()
-                )],
-                true,
-            ),
-            Instruction::Cmp(lhs, rhs) => (
-                vec![format!("cmpq\t\t{}, {}", lhs.to_string(), rhs.to_string())],
-                true,
-            ),
-            Instruction::Cqo => (vec!["cqo".to_string()], true),
-            Instruction::Label(label) => (vec![format!("{}:", label)], false),
-            Instruction::Jmp(label) => (vec![format!("jmp\t\t{}", label)], true),
-            Instruction::JmpCC(cond, label) => (vec![format!("j{}\t\t{}", cond, label)], true),
-            Instruction::Idiv(operand) => (vec![format!("idivq\t\t{}", operand.to_string())], true),
-            Instruction::Mov { src, dest } => (
-                vec![format!("movq\t\t{}, {}", src.to_string(), dest.to_string())],
-                true,
-            ),
-            Instruction::Ret => (
-                vec![
-                    format!("movq\t\t%rbp, %rsp"),
-                    format!("popq\t\t%rbp"),
-                    format!("ret"),
-                ],
-                true,
-            ),
-            Instruction::SetCC(cond, operand) => (
-                vec![format!("set{}\t\t{}", cond, operand.to_string())],
-                true,
-            ),
-            Instruction::Unary(op, operand) => (
-                vec![format!(
-                    "{}\t\t{}",
-                    Self::unary_op_to_inst(op),
-                    operand.to_string()
-                )],
-                true,
-            ),
-        };
-        insts
-            .into_iter()
-            .map(|s| format!("{}{}", if indent { INDENT } else { "" }, s))
-            .collect::<Vec<_>>()
-            .join("\n")
+                    src,
+                    dest
+                )
+            }
+            InstructionKind::Cmp(lhs, rhs) => {
+                write!(f, "{:<10}\t\t{}, {}", "cmpq", lhs, rhs)
+            }
+            InstructionKind::Cqo => write!(f, "{:<10}", "cqo"),
+            InstructionKind::Label(label) => write!(f, "{}:", label),
+            InstructionKind::Jmp(label) => write!(f, "{:<10}\t\t{}", "jmp", label),
+            InstructionKind::JmpCC(cond, label) => {
+                write!(f, "{:<10}\t\t{}", format!("j{}", cond), label)
+            }
+            InstructionKind::Idiv(operand) => write!(f, "{:<10}\t\t{}", "idivq", operand),
+            InstructionKind::Mov { src, dest } => write!(f, "{:<10}\t\t{}, {}", "movq", src, dest),
+            InstructionKind::Ret => {
+                write!(f, "{:<10}\t\t%rbp, %rsp\n", "movq")?;
+                write!(f, "{}{:<10}\t\t%rbp\n", INDENT, "popq")?;
+                write!(f, "{}{:<10}", INDENT, "ret")
+            }
+            InstructionKind::SetCC(cond, operand) => {
+                write!(f, "{:<10}\t\t{}", format!("set{}", cond), operand)
+            }
+            InstructionKind::Unary(op, operand) => {
+                write!(f, "{:<10}\t\t{}", Self::unary_op_to_inst(op), operand)
+            }
+        }
     }
 }
 
@@ -177,13 +207,13 @@ pub enum Operand {
     Stack(i32),
 }
 
-impl Operand {
-    fn to_string(&self) -> String {
+impl Display for Operand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Operand::Imm(value) => format!("${}", value),
-            Operand::Pseudo(var) => format!("pseudo.{}", var),
-            Operand::Register(reg) => reg.to_string(),
-            Operand::Stack(n) => format!("{}(%rbp)", n),
+            Operand::Imm(value) => write!(f, "${}", value),
+            Operand::Pseudo(var) => write!(f, "pseudo.{}", var),
+            Operand::Register(reg) => reg.fmt(f),
+            Operand::Stack(n) => write!(f, "-{}(%rbp)", n),
         }
     }
 }
