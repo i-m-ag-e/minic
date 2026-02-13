@@ -1,5 +1,6 @@
 mod asm;
 mod ast;
+mod debug_info;
 mod lexer;
 mod parser;
 mod pretty_print;
@@ -15,7 +16,7 @@ use std::{
 };
 
 use anyhow::{self, bail};
-use clap;
+use clap::{self, CommandFactory};
 use lexer::Lexer;
 use source_file::SourceFile;
 use symbol::SymbolTable;
@@ -65,6 +66,23 @@ pub struct Cli {
     /// only output assembly files
     #[arg(short = 'S', long)]
     only_assembly: bool,
+
+    /// don't generate comments in assembly output
+    #[arg(long)]
+    no_comments: bool,
+
+    /// don't output assembly to stdout
+    #[arg(short = 'O', long)]
+    no_stdout: bool,
+
+    /// don't keep assembly files after compilation;
+    /// ignored if --only-assembly is set
+    #[arg(short = 'K', long)]
+    no_keep_asm: bool,
+
+    /// debug mode; prints additional debug information during compilation
+    #[arg(long)]
+    debug: bool,
 }
 
 pub fn assemble(
@@ -73,6 +91,9 @@ pub fn assemble(
     stop_at_parse: bool,
     stop_at_tacky: bool,
     stop_at_codegen: bool,
+    no_stdout: bool,
+    no_comments: bool,
+    debug: bool,
 ) -> anyhow::Result<String> {
     let mut interner = SymbolTable::new();
     let lexer = Lexer::new(source_file, &mut interner);
@@ -81,14 +102,20 @@ pub fn assemble(
         let lexeme = &source_file[token.begin.0..token.end.0];
         let line_col_start = source_file.line_col(token.begin.0);
         let line_col_end = source_file.line_col(token.end.0);
-        print!(
-            "{:#?} <{:?} :: ({}:{} - {}:{}>)",
-            token, lexeme, line_col_start.0, line_col_start.1, line_col_end.0, line_col_end.1
-        );
+
+        if debug {
+            print!(
+                "{:#?} <{:?} :: ({}:{} - {}:{}>)",
+                token, lexeme, line_col_start.0, line_col_start.1, line_col_end.0, line_col_end.1
+            );
+        }
+
         if let TokenType::Identifier(sym) = &token.token_type {
             let name = interner.resolve(*sym).unwrap();
-            println!(" (ident: {:?})", name);
-        } else {
+            if debug {
+                println!(" (ident: {:?})", name);
+            }
+        } else if debug {
             println!("");
         }
     }
@@ -101,7 +128,9 @@ pub fn assemble(
         source_file.set_tokens(Parser::filter_saved_tokens(tokens, &mut used_tokens));
 
         let mut pretty_printer = pretty_print::PrettyPrinter::new();
-        pretty_printer.visit_program(&prog);
+        if debug {
+            pretty_printer.visit_program(&prog);
+        }
         // println!("{:#?}", prog);
         prog
     } else {
@@ -111,7 +140,9 @@ pub fn assemble(
     let tacky_prog = if !stop_at_parse {
         let mut tacky_gen = tacky::tacky_gen::TackyGen::new(source_file);
         let tacky_prog = tacky_gen.visit_program(&prog);
-        println!("{:#?}", tacky_prog);
+        if debug {
+            println!("{:#?}", tacky_prog);
+        }
         tacky_prog
     } else {
         return Ok(String::new());
@@ -119,15 +150,20 @@ pub fn assemble(
 
     let asm_program = if !stop_at_tacky {
         let asm_program = tacky_to_asm(&tacky_prog);
-        println!("{:#?}", asm_program);
+        if debug {
+            println!("{:#?}", asm_program);
+        }
         asm_program
     } else {
         return Ok(String::new());
     };
 
     if !stop_at_codegen {
-        let asm_code = asm_program.to_string();
-        println!("{}", asm_code);
+        let mut asm_code = String::new();
+        asm_program.to_asm_string(&mut asm_code, no_comments)?;
+        if !no_stdout {
+            println!("{}", asm_code);
+        }
         return Ok(asm_code);
     }
     Ok(String::new())
@@ -193,6 +229,11 @@ fn preprocess_source_file(file: &String, out_file: &String) -> anyhow::Result<So
 pub fn compile(cli: &Cli) -> anyhow::Result<()> {
     // let asm = assemble(source_file, cli.lex, cli.parse, cli.codegen)?;
 
+    if cli.files.is_empty() {
+        Cli::command().print_help()?;
+        return Ok(());
+    }
+
     if cli.output.is_some() && cli.object_file && cli.files.len() > 1 {
         bail!("Cannot specify output file when compiling multiple source files to object files",);
     }
@@ -223,9 +264,20 @@ pub fn compile(cli: &Cli) -> anyhow::Result<()> {
 
     for ((asm_file, pp_file), source_file) in asm_files.iter().zip(&pp_files).zip(&cli.files) {
         let mut source = preprocess_source_file(source_file, pp_file)?;
-        println!("Source: {:?}", source);
-        let asm = assemble(&mut source, cli.lex, cli.parse, cli.tacky, cli.codegen)
-            .map_err(|e| handle_compile_error(e, &source))?;
+        if cli.debug {
+            println!("Source: {:?}", source);
+        }
+        let asm = assemble(
+            &mut source,
+            cli.lex,
+            cli.parse,
+            cli.tacky,
+            cli.codegen,
+            cli.no_stdout,
+            cli.no_comments,
+            cli.debug,
+        )
+        .map_err(|e| handle_compile_error(e, &source))?;
 
         if cli.lex || cli.parse || cli.tacky || cli.codegen {
             continue;
@@ -265,7 +317,15 @@ pub fn compile(cli: &Cli) -> anyhow::Result<()> {
 
     if !status.success() {
         bail!("gcc failed with exit code: {}", status);
-    } else {
-        Ok(())
     }
+
+    if cli.no_keep_asm {
+        for asm_file in &asm_files {
+            fs::remove_file(asm_file).map_err(|e| {
+                anyhow::anyhow!("Failed to remove assembly file `{}`: {}", asm_file, e)
+            })?;
+        }
+    }
+
+    Ok(())
 }

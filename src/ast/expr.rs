@@ -1,7 +1,9 @@
+use std::fmt::Display;
+
 use serde::Serialize;
 
 use crate::{
-    lexer::token::{Literal, Token},
+    lexer::token::{Literal, TokenID},
     with_token::WithToken,
 };
 
@@ -10,6 +12,16 @@ pub enum Expr {
     Binary(BinaryExpr),
     Constant(WithToken<Literal>),
     Unary(UnaryExpr),
+}
+
+impl Expr {
+    pub fn token(&self) -> TokenID {
+        match self {
+            Expr::Binary(binary_expr) => binary_expr.operator.token_id,
+            Expr::Constant(lit) => lit.token_id,
+            Expr::Unary(unary_expr) => unary_expr.operator.token_id,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
@@ -34,6 +46,32 @@ pub enum BinaryOp {
     Subtract,
 }
 
+impl Display for BinaryOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let op_str = match self {
+            BinaryOp::Add => "+",
+            BinaryOp::And => "&&",
+            BinaryOp::BitAnd => "&",
+            BinaryOp::BitOr => "|",
+            BinaryOp::BitXor => "^",
+            BinaryOp::Divide => "/",
+            BinaryOp::Equal => "==",
+            BinaryOp::Greater => ">",
+            BinaryOp::GreaterEqual => ">=",
+            BinaryOp::LeftShift => "<<",
+            BinaryOp::LessEqual => "<=",
+            BinaryOp::LessThan => "<",
+            BinaryOp::Modulus => "%",
+            BinaryOp::Multiply => "*",
+            BinaryOp::NotEqual => "!=",
+            BinaryOp::Or => "||",
+            BinaryOp::RightShift => ">>",
+            BinaryOp::Subtract => "-",
+        };
+        write!(f, "{}", op_str)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryExpr {
     pub left: Box<Expr>,
@@ -46,6 +84,17 @@ pub enum UnaryOp {
     Negate,
     Not,
     BitNot,
+}
+
+impl Display for UnaryOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let op_str = match self {
+            UnaryOp::Negate => "-",
+            UnaryOp::Not => "!",
+            UnaryOp::BitNot => "~",
+        };
+        write!(f, "{}", op_str)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
