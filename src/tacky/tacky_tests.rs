@@ -1,7 +1,8 @@
 use crate::{
-    ast::ASTRefVisitor,
+    ast::{ASTRefVisitor, ASTVisitor},
     lexer::{Lexer, LexerResult},
     parser::Parser,
+    resolver::Resolver,
     source_file::SourceFile,
     symbol::SymbolTable,
     tacky::{Program, tacky_gen::TackyGen},
@@ -20,7 +21,10 @@ fn test_string_success(s: &str) -> anyhow::Result<Program> {
     let prog = parser.parse()?;
     input.set_tokens(Parser::filter_saved_tokens(tokens, &mut used_tokens));
 
-    let mut tacky_gen = TackyGen::new(&input);
+    let mut resolver = Resolver::new(symbol_table, &input);
+    let prog = resolver.visit_program(prog)?;
+
+    let mut tacky_gen = TackyGen::new(&input, resolver.symbol_table());
     let tacky_prog = tacky_gen.visit_program(&prog);
     Ok(tacky_prog)
 }

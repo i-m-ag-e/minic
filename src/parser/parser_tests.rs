@@ -40,6 +40,15 @@ impl<'a> JsonVisitor<'a> {
 }
 
 impl<'a> ExprRefVisitor<Value> for JsonVisitor<'a> {
+    fn visit_assignment_expr(&mut self, expr: &expr::AssignExpr) -> Value {
+        json!({
+            "type": "AssignmentExpr",
+            "token": self.visit_token_short(expr.eq_token.get_token(&self.tokens)),
+            "left": self.visit_expr(&expr.target),
+            "right": self.visit_expr(&expr.right),
+        })
+    }
+
     fn visit_binary_expr(&mut self, expr: &expr::BinaryExpr) -> Value {
         json!({
             "type": format!("BinaryExpr({:?})", *expr.operator),
@@ -65,6 +74,15 @@ impl<'a> ExprRefVisitor<Value> for JsonVisitor<'a> {
             "operator_token": op_token,
         })
     }
+
+    fn visit_variable(&mut self, var: &WithToken<Symbol>) -> Value {
+        let name = self.symbol_table.resolve(var.item).unwrap_or("<unknown>");
+        json!({
+            "type": "Variable",
+            "name": name,
+            "token": self.visit_token_short(var.get_token(&self.tokens)),
+        })
+    }
 }
 
 impl<'a> StmtRefVisitor<Value> for JsonVisitor<'a> {
@@ -75,7 +93,13 @@ impl<'a> StmtRefVisitor<Value> for JsonVisitor<'a> {
         })
     }
 
-    fn visit_return_stmt(&mut self, stmt: &Option<Expr>) -> Value {
+    fn visit_null_stmt(&mut self) -> Value {
+        json!({
+            "type": "NullStmt",
+        })
+    }
+
+    fn visit_return_stmt(&mut self, stmt: &WithToken<Option<Expr>>) -> Value {
         json!({
             "type": "ReturnStmt",
             "expr": stmt.as_ref().map(|e| self.visit_expr(e)),
@@ -88,6 +112,8 @@ impl<'a> ASTRefVisitor for JsonVisitor<'a> {
     type FunctionDefResult = Value;
     type StmtResult = Value;
     type ExprResult = Value;
+    type BlockItemResult = Value;
+    type VarDeclResult = Value;
 
     fn visit_program(&mut self, program: &Program) -> Self::ProgramResult {
         json!({
@@ -100,7 +126,22 @@ impl<'a> ASTRefVisitor for JsonVisitor<'a> {
         json!({
             "type": "FunctionDef",
             "name": self.visit_token_short(func_def.name.get_token(&self.tokens)),
-            "body": func_def.body.as_ref().map(|stmts| stmts.iter().map(|s| self.visit_stmt(s)).collect::<Vec<_>>()),
+            "body": func_def.body.as_ref().map(|stmts| stmts.iter().map(|s| self.visit_block_item(s)).collect::<Vec<_>>()),
+        })
+    }
+
+    fn visit_block_item(&mut self, item: &BlockItem) -> Self::BlockItemResult {
+        match item {
+            BlockItem::Stmt(stmt) => self.visit_stmt(stmt),
+            BlockItem::Decl(decl) => self.visit_var_decl(decl),
+        }
+    }
+
+    fn visit_var_decl(&mut self, var_decl: &VarDeclaration) -> Self::VarDeclResult {
+        json!({
+            "type": "VarDecl",
+            "name": self.visit_token_short(var_decl.name.get_token(&self.tokens)),
+            "initializer": var_decl.initializer.as_ref().map(|e| self.visit_expr(e)),
         })
     }
 }

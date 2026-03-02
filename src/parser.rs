@@ -1,9 +1,9 @@
 pub mod parser_error;
 
-use crate::ast::FunctionDef;
-use crate::ast::expr::{BinaryExpr, BinaryOp, Expr, UnaryExpr, UnaryOp};
+use crate::ast::expr::{AssignExpr, BinaryExpr, BinaryOp, Expr, UnaryExpr, UnaryOp};
+use crate::ast::{BlockItem, FunctionDef, VarDeclaration};
 use crate::ast::{Program, stmt::Stmt};
-use crate::lexer::token::Literal;
+use crate::lexer::token::{Literal, TokenID};
 use crate::source_file::SourcePosition;
 use crate::symbol::Symbol;
 use anyhow::Result;
@@ -29,6 +29,7 @@ macro_rules! hash_map {
 
 lazy_static! {
     static ref BINARY_OPS_PRECEDENCE: std::collections::HashMap<BinaryOp, u8> = hash_map! {
+        BinaryOp::Assign => 50,
         BinaryOp::Or => 60,
         BinaryOp::And => 65,
         BinaryOp::BitOr => 70,
@@ -70,7 +71,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn save_previous(&mut self) -> usize {
+    fn save_previous(&mut self) -> TokenID {
         let uc = self.used_count;
         if self.index > 0 && self.index - 1 < self.used_tokens.len() {
             self.used_tokens[self.index - 1] = true;
@@ -230,7 +231,7 @@ impl<'a> Parser<'a> {
             if self.is_at_end() {
                 return Err(self.make_eof());
             }
-            let stmt = self.parse_stmt()?;
+            let stmt = self.parse_block_item()?;
             body.push(stmt);
         }
 
@@ -239,12 +240,53 @@ impl<'a> Parser<'a> {
             body: Some(body),
         })
     }
+
+    fn parse_block_item(&mut self) -> ParseResult<BlockItem> {
+        match self.peek_token_type() {
+            Some(TokenType::KInt) => self.parse_declaration().map(BlockItem::Decl),
+            _ => self.parse_stmt().map(BlockItem::Stmt),
+        }
+    }
+
+    fn parse_declaration(&mut self) -> ParseResult<VarDeclaration> {
+        self.consume(&TokenType::KInt)?;
+
+        let name = self.consume_if(
+            |tt| matches!(tt, TokenType::Identifier(_)),
+            |error| ParserErrorType::ExpectedAnotherString {
+                expected: "<identifier>",
+                found: error.clone(),
+            },
+        )?;
+        let &TokenType::Identifier(name) = &name.token_type else {
+            unreachable!()
+        };
+        let name_token_id = self.save_previous();
+
+        let initializer = if let Some(TokenType::Equal) = self.peek_token_type() {
+            let eq_token = self.save_and_advance().unwrap();
+            Some(WithToken::new(self.parse_expr()?, eq_token))
+        } else {
+            None
+        };
+
+        self.consume(&TokenType::Semicolon)?;
+
+        Ok(VarDeclaration {
+            name: WithToken::new(name, name_token_id),
+            initializer,
+        })
+    }
 }
 
 impl<'a> Parser<'a> {
     fn parse_stmt(&mut self) -> ParseResult<Stmt> {
         match self.peek_token_type() {
             Some(TokenType::KReturn) => self.parse_return_stmt(),
+            Some(TokenType::Semicolon) => {
+                self.advance().unwrap();
+                Ok(Stmt::Null)
+            }
             _ => self.parse_expr_stmt(),
         }
     }
@@ -257,13 +299,15 @@ impl<'a> Parser<'a> {
 
     fn parse_return_stmt(&mut self) -> ParseResult<Stmt> {
         self.consume(&TokenType::KReturn)?;
+        let ret_token = self.save_previous();
+
         if let Some(TokenType::Semicolon) = self.peek_token_type() {
             self.consume(&TokenType::Semicolon)?;
-            Ok(Stmt::Return(None))
+            Ok(Stmt::Return(WithToken::new(None, ret_token)))
         } else {
             let expr = self.parse_expr()?;
             self.consume(&TokenType::Semicolon)?;
-            Ok(Stmt::Return(Some(expr)))
+            Ok(Stmt::Return(WithToken::new(Some(expr), ret_token)))
         }
     }
 }
@@ -275,49 +319,33 @@ impl<'a> Parser<'a> {
 
     fn parse_expr_with_precedence(&mut self, min_prec: u8) -> ParseResult<Expr> {
         let mut left = self.parse_factor()?;
-        while let Ok(binop) = Self::binary_op_from_token(self.peek().unwrap())
+        while let Ok(binop) = BinaryOp::try_from(self.peek_token_type().unwrap())
             && BINARY_OPS_PRECEDENCE.get(&binop).copied().unwrap_or(0) >= min_prec
         {
-            let operator = Self::binary_op_from_token(self.peek().unwrap())?;
-            let operator_token_index = self.save_and_advance().unwrap();
-
             let prec = BINARY_OPS_PRECEDENCE.get(&binop).copied().unwrap_or(0);
-            let right = self.parse_expr_with_precedence(prec + 1)?;
-            let binary_expr = BinaryExpr {
-                left: Box::new(left),
-                operator: WithToken::new(operator, operator_token_index),
-                right: Box::new(right),
-            };
-            left = Expr::Binary(binary_expr);
+
+            if let Some(TokenType::Equal) = self.peek_token_type() {
+                let eq = self.save_and_advance().unwrap();
+                let right = self.parse_expr_with_precedence(prec)?; // not +1 since we want to keep consuming '='s
+                left = Expr::Assignment(AssignExpr {
+                    target: Box::new(left),
+                    eq_token: WithToken::new((), eq),
+                    right: Box::new(right),
+                });
+            } else {
+                let operator = binop;
+                let operator_token_index = self.save_and_advance().unwrap();
+
+                let right = self.parse_expr_with_precedence(prec + 1)?;
+                let binary_expr = BinaryExpr {
+                    left: Box::new(left),
+                    operator: WithToken::new(operator, operator_token_index),
+                    right: Box::new(right),
+                };
+                left = Expr::Binary(binary_expr);
+            }
         }
         Ok(left)
-    }
-
-    fn binary_op_from_token(token: &Token) -> ParseResult<BinaryOp> {
-        match &token.token_type {
-            TokenType::And => Ok(BinaryOp::And),
-            TokenType::Asterisk => Ok(BinaryOp::Multiply),
-            TokenType::BitAnd => Ok(BinaryOp::BitAnd),
-            TokenType::BitOr => Ok(BinaryOp::BitOr),
-            TokenType::BitXor => Ok(BinaryOp::BitXor),
-            TokenType::DoubleEqual => Ok(BinaryOp::Equal),
-            TokenType::Greater => Ok(BinaryOp::Greater),
-            TokenType::GreaterEqual => Ok(BinaryOp::GreaterEqual),
-            TokenType::LeftShift => Ok(BinaryOp::LeftShift),
-            TokenType::Less => Ok(BinaryOp::LessThan),
-            TokenType::LessEqual => Ok(BinaryOp::LessEqual),
-            TokenType::Minus => Ok(BinaryOp::Subtract),
-            TokenType::NotEqual => Ok(BinaryOp::NotEqual),
-            TokenType::Or => Ok(BinaryOp::Or),
-            TokenType::Percent => Ok(BinaryOp::Modulus),
-            TokenType::Plus => Ok(BinaryOp::Add),
-            TokenType::RightShift => Ok(BinaryOp::RightShift),
-            TokenType::Slash => Ok(BinaryOp::Divide),
-            _ => Err(ParserError {
-                err_type: ParserErrorType::UnexpectedToken(token.token_type.clone()),
-                span: (token.begin, token.end),
-            }),
-        }
     }
 
     fn parse_factor(&mut self) -> ParseResult<Expr> {
@@ -329,6 +357,11 @@ impl<'a> Parser<'a> {
             TokenType::Literal(_) => self.parse_literal(),
             TokenType::Minus | TokenType::BitNot | TokenType::Not => self.parse_unary_expr(),
             TokenType::LeftParen => self.parse_grouped_expr(),
+            TokenType::Identifier(name) => {
+                let name = *name;
+                let token = self.save_and_advance().unwrap();
+                Ok(Expr::Variable(WithToken::new(name, token)))
+            }
             tt => Err(ParserError {
                 err_type: ParserErrorType::UnexpectedToken(tt.clone()),
                 span: self.peek().map(|t| (t.begin, t.end)).unwrap(),
@@ -355,20 +388,14 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn unary_op_from_token(token: &Token) -> ParseResult<UnaryOp> {
-        match &token.token_type {
-            TokenType::Minus => Ok(UnaryOp::Negate),
-            TokenType::BitNot => Ok(UnaryOp::BitNot),
-            TokenType::Not => Ok(UnaryOp::Not),
-            _ => Err(ParserError {
-                err_type: ParserErrorType::UnexpectedToken(token.token_type.clone()),
-                span: (token.begin, token.end),
-            }),
-        }
-    }
-
     fn parse_unary_expr(&mut self) -> ParseResult<Expr> {
-        let operator = Self::unary_op_from_token(self.peek().unwrap())?;
+        let operator = {
+            let op_token = self.peek().unwrap();
+            UnaryOp::try_from(&op_token.token_type).map_err(|_| ParserError {
+                err_type: ParserErrorType::UnexpectedToken(op_token.token_type.clone()),
+                span: (op_token.begin, op_token.end),
+            })
+        }?;
         let operator_token_index = self.save_and_advance().unwrap();
 
         let operand = self.parse_factor()?;

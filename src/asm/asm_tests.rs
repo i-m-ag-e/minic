@@ -1,8 +1,9 @@
 use crate::{
     asm::tacky_to_asm,
-    ast::ASTRefVisitor,
+    ast::{ASTRefVisitor, ASTVisitor},
     lexer::{Lexer, LexerResult},
     parser::Parser,
+    resolver::Resolver,
     source_file::SourceFile,
     symbol::SymbolTable,
     tacky::tacky_gen::TackyGen,
@@ -21,8 +22,11 @@ fn compile_to_asm_string(s: &str) -> anyhow::Result<String> {
     let ast_program = parser.parse()?;
     input.set_tokens(Parser::filter_saved_tokens(tokens, &mut used_tokens));
 
-    let mut tacky_gen = TackyGen::new(&input);
-    let tacky_prog = tacky_gen.visit_program(&ast_program);
+    let mut resolver = Resolver::new(symbol_table, &input);
+    let prog = resolver.visit_program(ast_program)?;
+
+    let mut tacky_gen = TackyGen::new(&input, &resolver.symbol_table());
+    let tacky_prog = tacky_gen.visit_program(&prog);
 
     let asm_ast = tacky_to_asm(&tacky_prog);
 

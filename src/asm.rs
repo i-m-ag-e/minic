@@ -5,7 +5,6 @@ use std::fmt::Display;
 use crate::{
     ast::expr::{BinaryOp, UnaryOp},
     debug_info::DebugInfo,
-    tacky::VarID,
 };
 pub use asm_gen::tacky_to_asm;
 
@@ -138,6 +137,7 @@ impl InstructionKind {
             | BinaryOp::LessEqual => {
                 panic!("Logical operations should be handled separately with JmpCC and SetCC")
             }
+            _ => unimplemented!(),
         }
     }
 
@@ -199,10 +199,10 @@ impl Display for InstructionKind {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Operand {
     Imm(i64),
-    Pseudo(VarID),
+    Pseudo(String),
     Register(Register),
     Stack(i32),
 }

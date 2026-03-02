@@ -13,6 +13,11 @@ pub enum ParserErrorType {
         expected: TokenType,
         found: TokenType,
     },
+    #[error("Expected token: {expected}, but found: {found:?}")]
+    ExpectedAnotherString {
+        expected: &'static str,
+        found: TokenType,
+    },
 }
 
 #[derive(Debug, Error)]

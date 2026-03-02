@@ -4,6 +4,7 @@ mod debug_info;
 mod lexer;
 mod parser;
 mod pretty_print;
+mod resolver;
 pub mod source_file;
 mod symbol;
 mod tacky;
@@ -15,8 +16,9 @@ use std::{
     process::{Command, Stdio},
 };
 
-use anyhow::{self, bail};
+use anyhow::{self, Ok, bail};
 use clap::{self, CommandFactory};
+use colored::Colorize;
 use lexer::Lexer;
 use source_file::SourceFile;
 use symbol::SymbolTable;
@@ -26,9 +28,10 @@ pub use parser::parser_error;
 
 use crate::{
     asm::tacky_to_asm,
-    ast::ASTRefVisitor,
+    ast::{ASTRefVisitor, ASTVisitor},
     lexer::{LexerResult, token::TokenType},
     parser::Parser,
+    resolver::Resolver,
     source_file::SourcePosition,
 };
 
@@ -54,6 +57,10 @@ pub struct Cli {
     /// only run the lexer and parser
     #[arg(long)]
     parse: bool,
+
+    /// only run till the resolve stage
+    #[arg(long)]
+    validate: bool,
 
     /// only run till the codegen phase
     #[arg(long)]
@@ -90,6 +97,7 @@ pub fn assemble(
     stop_at_lex: bool,
     stop_at_parse: bool,
     stop_at_tacky: bool,
+    stop_at_resolve: bool,
     stop_at_codegen: bool,
     no_stdout: bool,
     no_comments: bool,
@@ -127,8 +135,11 @@ pub fn assemble(
         let prog = parser.parse()?;
         source_file.set_tokens(Parser::filter_saved_tokens(tokens, &mut used_tokens));
 
-        let mut pretty_printer = pretty_print::PrettyPrinter::new();
         if debug {
+            let mut pretty_printer = pretty_print::PrettyPrinter::new(
+                &interner,
+                Box::new(|table, sym| table.resolve(sym)),
+            );
             pretty_printer.visit_program(&prog);
         }
         // println!("{:#?}", prog);
@@ -137,8 +148,42 @@ pub fn assemble(
         return Ok(String::new());
     };
 
-    let tacky_prog = if !stop_at_parse {
-        let mut tacky_gen = tacky::tacky_gen::TackyGen::new(source_file);
+    let (prog, new_symbol_table) = if !stop_at_parse {
+        let mut resolver = Resolver::new(interner, source_file);
+        let prog = resolver.visit_program(prog)?;
+
+        for warn in resolver.warnings() {
+            let line_col_start = source_file.line_col(warn.location.0.0);
+            let line_col_end = source_file.line_col(warn.location.1.0);
+            println!(
+                "{}",
+                format!(
+                    "Warning: {} at {}:{} - {}:{} (at `{}`)",
+                    warn.warn_type,
+                    line_col_start.0,
+                    line_col_start.1,
+                    line_col_end.0,
+                    line_col_end.1,
+                    source_file[warn.location.0.0..warn.location.1.0].replace('\n', "\\n"),
+                )
+                .yellow()
+            );
+        }
+
+        if debug {
+            let mut pretty_printer = pretty_print::PrettyPrinter::new(
+                resolver.symbol_table(),
+                Box::new(|table, sym| table.resolve(sym)),
+            );
+            pretty_printer.visit_program(&prog);
+        }
+        (prog, resolver.release_symbol_table())
+    } else {
+        return Ok(String::new());
+    };
+
+    let tacky_prog = if !stop_at_resolve {
+        let mut tacky_gen = tacky::tacky_gen::TackyGen::new(source_file, &new_symbol_table);
         let tacky_prog = tacky_gen.visit_program(&prog);
         if debug {
             println!("{:#?}", tacky_prog);
@@ -188,6 +233,7 @@ fn make_error(
             source_file[span.0.0..span.1.0].replace('\n', "\\n"),
             msg
         )
+        .red()
     )
 }
 
@@ -272,6 +318,7 @@ pub fn compile(cli: &Cli) -> anyhow::Result<()> {
             cli.lex,
             cli.parse,
             cli.tacky,
+            cli.validate,
             cli.codegen,
             cli.no_stdout,
             cli.no_comments,
@@ -279,7 +326,7 @@ pub fn compile(cli: &Cli) -> anyhow::Result<()> {
         )
         .map_err(|e| handle_compile_error(e, &source))?;
 
-        if cli.lex || cli.parse || cli.tacky || cli.codegen {
+        if cli.lex || cli.parse || cli.validate || cli.tacky || cli.codegen {
             continue;
         }
 
@@ -287,7 +334,7 @@ pub fn compile(cli: &Cli) -> anyhow::Result<()> {
             .map_err(|e| anyhow::anyhow!("Failed to write assembly file `{}`: {}", asm_file, e))?;
     }
 
-    if cli.lex || cli.parse || cli.tacky || cli.codegen || cli.only_assembly {
+    if cli.lex || cli.parse || cli.validate || cli.tacky || cli.codegen || cli.only_assembly {
         return Ok(());
     }
 
