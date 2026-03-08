@@ -3,7 +3,7 @@ use std::mem;
 use crate::{
     ast::{
         self, ASTRefVisitor,
-        expr::{self, BinaryOp, ExprRefVisitor},
+        expr::{self, BinaryOp, ExprRefVisitor, UnaryOp},
         stmt::StmtRefVisitor,
     },
     lexer::token::{Literal, TokenID},
@@ -213,14 +213,70 @@ impl<'a> ExprRefVisitor<Value> for TackyGen<'a> {
     fn visit_unary_expr(&mut self, expr: &expr::UnaryExpr) -> Value {
         let operand_val = self.visit_expr(&expr.operand);
         let dest_var = self.make_var();
-        self.emit(
-            InstructionKind::Unary {
-                op: expr.operator.item,
-                dest: dest_var.clone(),
-                src: operand_val,
-            },
-            expr.operator.token_id,
-        );
+        let postfix = expr.postfix;
+
+        if let UnaryOp::Increment | UnaryOp::Decrement = *expr.operator {
+            let (new_op, op_str, converted_op_str) = if let UnaryOp::Increment = *expr.operator {
+                (BinaryOp::Add, "++", "+=")
+            } else {
+                (BinaryOp::Subtract, "--", "-=")
+            };
+
+            if postfix {
+                self.emit_many(
+                    expr.operator.token_id,
+                    [
+                        (
+                            InstructionKind::Copy {
+                                dest: dest_var.clone(),
+                                src: operand_val.clone(),
+                            },
+                            &format!("(p{0}) copy final result of {0}", op_str),
+                        ),
+                        (
+                            InstructionKind::Binary {
+                                op: new_op,
+                                dest: operand_val.clone(),
+                                left: operand_val.clone(),
+                                right: Value::Constant(1),
+                            },
+                            &format!("(p{}) {} {} 1", op_str, operand_val, converted_op_str),
+                        ),
+                    ],
+                );
+            } else {
+                self.emit_many(
+                    expr.operator.token_id,
+                    [
+                        (
+                            InstructionKind::Binary {
+                                op: new_op,
+                                dest: operand_val.clone(),
+                                left: operand_val.clone(),
+                                right: Value::Constant(1),
+                            },
+                            &format!("({}p) {} {} 1", op_str, operand_val, converted_op_str),
+                        ),
+                        (
+                            InstructionKind::Copy {
+                                dest: dest_var.clone(),
+                                src: operand_val,
+                            },
+                            &format!("({0}p) copy final result of {0}", op_str),
+                        ),
+                    ],
+                );
+            }
+        } else {
+            self.emit(
+                InstructionKind::Unary {
+                    op: expr.operator.item,
+                    dest: dest_var.clone(),
+                    src: operand_val,
+                },
+                expr.operator.token_id,
+            );
+        }
         dest_var
     }
 

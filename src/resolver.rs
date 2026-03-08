@@ -4,7 +4,7 @@ pub mod var_map;
 use crate::{
     ast::{
         ASTVisitor, BlockItem, FunctionDef, Program, VarDeclaration,
-        expr::{AssignExpr, Expr, ExprVisitor},
+        expr::{AssignExpr, Expr, ExprVisitor, UnaryOp},
         stmt::{Stmt, StmtVisitor},
     },
     resolver::{
@@ -99,7 +99,7 @@ impl<'a> ExprVisitor<ResolverResult<Expr>> for Resolver<'a> {
         } else {
             let token = tok.get_token(&self.source_file.get_tokens_checked());
             Err(ResolverError {
-                err_type: ResolverErrorType::InvalidAssignmentTarget,
+                err_type: ResolverErrorType::InvalidLValue,
                 span: (token.begin, token.end),
             })
         }
@@ -123,10 +123,24 @@ impl<'a> ExprVisitor<ResolverResult<Expr>> for Resolver<'a> {
     }
 
     fn visit_unary_expr(&mut self, expr: crate::ast::expr::UnaryExpr) -> ResolverResult<Expr> {
+        if let UnaryOp::Decrement | UnaryOp::Increment = *expr.operator {
+            if let Expr::Variable(_) = *expr.operand {
+            } else {
+                let token = expr
+                    .operator
+                    .get_token(&self.source_file.get_tokens_checked());
+                return Err(ResolverError {
+                    err_type: ResolverErrorType::InvalidLValue,
+                    span: (token.begin, token.end),
+                });
+            }
+        }
         let operand = self.visit_expr(*expr.operand)?;
+
         Ok(Expr::Unary(crate::ast::expr::UnaryExpr {
             operator: expr.operator,
             operand: Box::new(operand),
+            postfix: expr.postfix,
         }))
     }
 

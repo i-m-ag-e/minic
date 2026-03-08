@@ -111,6 +111,9 @@ impl InstructionKind {
         match op {
             UnaryOp::Negate => "negq",
             UnaryOp::BitNot => "notq",
+            UnaryOp::Decrement | UnaryOp::Increment => {
+                panic!("++ and -- should be converted to Copy and Binary during TACKY construction")
+            }
             UnaryOp::Not => panic!("Logical NOT should be handled separately with JmpCC and SetCC"),
         }
     }
@@ -137,7 +140,21 @@ impl InstructionKind {
             | BinaryOp::LessEqual => {
                 panic!("Logical operations should be handled separately with JmpCC and SetCC")
             }
-            _ => unimplemented!(),
+            BinaryOp::Assign => panic!(
+                "binary_op_to_inst called on `assign`: assign expression should be converted to copy operation"
+            ),
+            BinaryOp::AddAssign
+            | BinaryOp::BitAndAssign
+            | BinaryOp::BitOrAssign
+            | BinaryOp::BitXorAssign
+            | BinaryOp::DivideAssign
+            | BinaryOp::MultiplyAssign
+            | BinaryOp::ModulusAssign
+            | BinaryOp::LeftShiftAssign
+            | BinaryOp::RightShiftAssign
+            | BinaryOp::SubtractAssign => panic!(
+                "compound assign expressions should be converted to assign and binary expression during parsing"
+            ),
         }
     }
 

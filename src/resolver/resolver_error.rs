@@ -5,7 +5,7 @@ use crate::source_file::SourcePosition;
 #[derive(Debug, Clone, Error)]
 pub enum ResolverErrorType {
     #[error("Invalid assignment target")]
-    InvalidAssignmentTarget,
+    InvalidLValue,
     #[error("Undefined variable: {0}")]
     UndefinedVariable(String),
     #[error("Variable already defined: previous declaration at {prev_line}:{prev_col}")]

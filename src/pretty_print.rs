@@ -57,14 +57,7 @@ impl<'a, Table> ExprRefVisitor<()> for PrettyPrinter<'a, Table> {
 
     fn visit_unary_expr(&mut self, expr: &crate::ast::expr::UnaryExpr) -> () {
         print!("(");
-        print!(
-            "{}",
-            match expr.operator.item {
-                UnaryOp::Not => "!",
-                UnaryOp::Negate => "-",
-                UnaryOp::BitNot => "~",
-            }
-        );
+        print!("{}", expr.operator.item);
         self.visit_expr(&expr.operand);
         print!(")");
     }
