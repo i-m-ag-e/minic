@@ -7,14 +7,16 @@ body:
   - Unary:
       op: Negate
       dest:
-        Var: 0
+        Var: pv.0
       src:
         Constant: 42
   - Unary:
       op: BitNot
       dest:
-        Var: 1
+        Var: pv.1
       src:
-        Var: 0
+        Var: pv.0
   - Return:
-      Var: 1
+      Var: pv.1
+  - Return:
+      Constant: 0

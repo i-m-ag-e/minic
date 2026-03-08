@@ -93,12 +93,10 @@ impl InstructionKind {
     }
 }
 
-pub type VarID = usize;
-
 #[derive(Debug, Clone, Serialize)]
 pub enum Value {
     Constant(i64),
-    Var(VarID),
+    Var(String),
 }
 
 impl Display for Value {

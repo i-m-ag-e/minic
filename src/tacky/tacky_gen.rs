@@ -3,10 +3,11 @@ use std::mem;
 use crate::{
     ast::{
         self, ASTRefVisitor,
-        expr::{self, BinaryOp, ExprRefVisitor},
+        expr::{self, BinaryOp, ExprRefVisitor, UnaryOp},
         stmt::StmtRefVisitor,
     },
     lexer::token::{Literal, TokenID},
+    resolver::var_map::VarMap,
     source_file::SourceFile,
     tacky::{self, Instruction, InstructionKind, Value},
     with_token::WithToken,
@@ -17,23 +18,23 @@ pub struct TackyGen<'a> {
     pub var_count: usize,
     pub current_body: Vec<Instruction>,
     source_file: &'a SourceFile,
-    // current_line: usize,
+    symbol_table: &'a VarMap,
 }
 
 impl<'a> TackyGen<'a> {
-    pub fn new(source_file: &'a SourceFile) -> Self {
+    pub fn new(source_file: &'a SourceFile, symbol_table: &'a VarMap) -> Self {
         Self {
             var_count: 0,
             current_body: Vec::new(),
             source_file,
-            // current_line: 0,
+            symbol_table,
         }
     }
 
     fn make_var(&mut self) -> Value {
         let var_id = self.var_count;
         self.var_count += 1;
-        Value::Var(var_id)
+        Value::Var(format!("pv.{}", var_id))
     }
 
     fn make_logic_label(&self, op: &str, stage: &str, token_id: TokenID) -> String {
@@ -85,6 +86,20 @@ impl<'a> TackyGen<'a> {
 }
 
 impl<'a> ExprRefVisitor<Value> for TackyGen<'a> {
+    fn visit_assignment_expr(&mut self, expr: &expr::AssignExpr) -> Value {
+        let dest = self.visit_expr(&expr.target);
+        let src = self.visit_expr(&expr.right);
+        self.emit(
+            InstructionKind::Copy {
+                dest: dest.clone(),
+                src,
+            },
+            expr.eq_token.token_id,
+        );
+
+        dest
+    }
+
     fn visit_binary_expr(&mut self, expr: &expr::BinaryExpr) -> Value {
         let left_val = self.visit_expr(&expr.left);
         let token_id = expr.operator.token_id;
@@ -198,15 +213,76 @@ impl<'a> ExprRefVisitor<Value> for TackyGen<'a> {
     fn visit_unary_expr(&mut self, expr: &expr::UnaryExpr) -> Value {
         let operand_val = self.visit_expr(&expr.operand);
         let dest_var = self.make_var();
-        self.emit(
-            InstructionKind::Unary {
-                op: expr.operator.item,
-                dest: dest_var.clone(),
-                src: operand_val,
-            },
-            expr.operator.token_id,
-        );
+        let postfix = expr.postfix;
+
+        if let UnaryOp::Increment | UnaryOp::Decrement = *expr.operator {
+            let (new_op, op_str, converted_op_str) = if let UnaryOp::Increment = *expr.operator {
+                (BinaryOp::Add, "++", "+=")
+            } else {
+                (BinaryOp::Subtract, "--", "-=")
+            };
+
+            if postfix {
+                self.emit_many(
+                    expr.operator.token_id,
+                    [
+                        (
+                            InstructionKind::Copy {
+                                dest: dest_var.clone(),
+                                src: operand_val.clone(),
+                            },
+                            &format!("(p{0}) copy final result of {0}", op_str),
+                        ),
+                        (
+                            InstructionKind::Binary {
+                                op: new_op,
+                                dest: operand_val.clone(),
+                                left: operand_val.clone(),
+                                right: Value::Constant(1),
+                            },
+                            &format!("(p{}) {} {} 1", op_str, operand_val, converted_op_str),
+                        ),
+                    ],
+                );
+            } else {
+                self.emit_many(
+                    expr.operator.token_id,
+                    [
+                        (
+                            InstructionKind::Binary {
+                                op: new_op,
+                                dest: operand_val.clone(),
+                                left: operand_val.clone(),
+                                right: Value::Constant(1),
+                            },
+                            &format!("({}p) {} {} 1", op_str, operand_val, converted_op_str),
+                        ),
+                        (
+                            InstructionKind::Copy {
+                                dest: dest_var.clone(),
+                                src: operand_val,
+                            },
+                            &format!("({0}p) copy final result of {0}", op_str),
+                        ),
+                    ],
+                );
+            }
+        } else {
+            self.emit(
+                InstructionKind::Unary {
+                    op: expr.operator.item,
+                    dest: dest_var.clone(),
+                    src: operand_val,
+                },
+                expr.operator.token_id,
+            );
+        }
         dest_var
+    }
+
+    fn visit_variable(&mut self, var: &WithToken<crate::symbol::Symbol>) -> Value {
+        let var_name = self.symbol_table.resolve_assert(**var);
+        Value::Var(var_name.to_string())
     }
 }
 
@@ -215,10 +291,12 @@ impl<'a> StmtRefVisitor<()> for TackyGen<'a> {
         self.visit_expr(stmt);
     }
 
-    fn visit_return_stmt(&mut self, stmt: &Option<expr::Expr>) -> () {
-        if let Some(ret_expr) = stmt {
+    fn visit_null_stmt(&mut self) -> () {}
+
+    fn visit_return_stmt(&mut self, stmt: &WithToken<Option<expr::Expr>>) -> () {
+        if let Some(ret_expr) = &stmt.item {
             let ret_val = self.visit_expr(ret_expr);
-            self.emit(InstructionKind::Return(ret_val), ret_expr.token());
+            self.emit(InstructionKind::Return(ret_val), stmt.token_id);
         } else {
             unimplemented!()
         }
@@ -230,6 +308,8 @@ impl<'a> ASTRefVisitor for TackyGen<'a> {
     type FunctionDefResult = tacky::FunctionDef;
     type StmtResult = ();
     type ExprResult = Value;
+    type BlockItemResult = ();
+    type VarDeclResult = ();
 
     fn visit_function_def(&mut self, func_def: &ast::FunctionDef) -> Self::FunctionDefResult {
         assert!(self.current_body.is_empty());
@@ -238,8 +318,15 @@ impl<'a> ASTRefVisitor for TackyGen<'a> {
             unimplemented!();
         }
 
-        for stmt in func_def.body.as_ref().unwrap() {
-            self.visit_stmt(stmt);
+        for item in func_def.body.as_ref().unwrap() {
+            self.visit_block_item(item);
+        }
+
+        if func_def.name.item == "main" {
+            self.emit(
+                InstructionKind::Return(Value::Constant(0)),
+                func_def.name.token_id,
+            );
         }
 
         let line_col = self
@@ -263,5 +350,24 @@ impl<'a> ASTRefVisitor for TackyGen<'a> {
 
         // only use the first function for now
         tacky::Program(function_defs.remove(0))
+    }
+
+    fn visit_block_item(&mut self, item: &ast::BlockItem) -> Self::BlockItemResult {
+        match &item {
+            ast::BlockItem::Decl(var_decl) => self.visit_var_decl(var_decl),
+            ast::BlockItem::Stmt(stmt) => self.visit_stmt(stmt),
+        }
+    }
+
+    fn visit_var_decl(&mut self, var_decl: &ast::VarDeclaration) -> Self::VarDeclResult {
+        if let Some(initializer) = &var_decl.initializer {
+            let src = self.visit_expr(&*initializer);
+            let dst = self.visit_variable(&var_decl.name);
+            self.emit_with_message(
+                InstructionKind::Copy { dest: dst, src },
+                var_decl.name.token_id,
+                "(var_decl with initializer)",
+            );
+        }
     }
 }

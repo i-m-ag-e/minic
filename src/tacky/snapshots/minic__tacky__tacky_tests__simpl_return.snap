@@ -6,3 +6,5 @@ name: main
 body:
   - Return:
       Constant: 0
+  - Return:
+      Constant: 0

@@ -269,23 +269,22 @@ fn tacky_instr_to_asm(instr: &tacky::Instruction, body: &mut Vec<Instruction>) {
 fn tacky_value_to_operand(value: &tacky::Value) -> Operand {
     match value {
         tacky::Value::Constant(c) => Operand::Imm(*c),
-        tacky::Value::Var(var_id) => Operand::Pseudo(*var_id),
+        tacky::Value::Var(var_id) => Operand::Pseudo(var_id.clone()),
     }
 }
 
 fn replace_pseudo_operand(
     stack_offset: i32,
     operand: &mut Operand,
-    pseudo_map: &mut std::collections::HashMap<usize, i32>,
+    pseudo_map: &mut std::collections::HashMap<String, i32>,
 ) -> i32 {
     if let Operand::Pseudo(var_id) = operand {
-        let var_id = *var_id;
-        if let Some(offset) = pseudo_map.get(&var_id) {
+        if let Some(offset) = pseudo_map.get(var_id) {
             *operand = Operand::Stack(*offset);
             stack_offset
         } else {
             let new_offset = stack_offset + 8;
-            pseudo_map.insert(var_id, new_offset);
+            pseudo_map.insert(var_id.clone(), new_offset);
             *operand = Operand::Stack(new_offset);
             new_offset
         }
@@ -364,7 +363,7 @@ fn alloc_stack_and_resolve_stack_ops(prog: &mut Program) {
                     replace_instruction!(func.body; [index] =>
                         Instruction {
                             kind: InstructionKind::Mov {
-                                src: src_op,
+                                src: src_op.clone(),
                                 dest: Operand::Register(Register::R10),
                             },
                             debug_info: debug_info.with_additional(format!("(stack binary {2} = {2} {0} {1}) {1} -> %r10", op, src_op, dest_op)),
@@ -373,7 +372,7 @@ fn alloc_stack_and_resolve_stack_ops(prog: &mut Program) {
                             kind: InstructionKind::Binary {
                                 op: op,
                                 src: Operand::Register(Register::R10),
-                                dest: dest_op,
+                                dest: dest_op.clone(),
                             },
                             debug_info: debug_info.with_additional(format!("(stack binary {2} = {2} {0} {1}) %r10 -> {2}", op, src_op, dest_op)),
                         }
@@ -388,7 +387,7 @@ fn alloc_stack_and_resolve_stack_ops(prog: &mut Program) {
                     replace_instruction!(func.body; [index] =>
                         Instruction {
                             kind: InstructionKind::Mov {
-                                src: dest_op,
+                                src: dest_op.clone(),
                                 dest: Operand::Register(Register::R11),
                             },
                             debug_info: debug_info.with_additional(format!("{} {} -> %r11", prefix, src)),
@@ -396,7 +395,7 @@ fn alloc_stack_and_resolve_stack_ops(prog: &mut Program) {
                         Instruction {
                             kind: InstructionKind::Binary {
                                 op: op,
-                                src: src,
+                                src: src.clone(),
                                 dest: Operand::Register(Register::R11),
                             },
                             debug_info: debug_info.with_additional(format!("{} {} * %r11 -> %r11", prefix, src)),
@@ -404,7 +403,7 @@ fn alloc_stack_and_resolve_stack_ops(prog: &mut Program) {
                         Instruction{
                             kind: InstructionKind::Mov {
                                 src: Operand::Register(Register::R11),
-                                dest: dest_op,
+                                dest: dest_op.clone(),
                             },
                             debug_info: debug_info.with_additional(format!("{} %r11 -> {}", prefix, dest_op)),
                         }
@@ -414,13 +413,13 @@ fn alloc_stack_and_resolve_stack_ops(prog: &mut Program) {
                     replace_instruction!(func.body; [index] =>
                         Instruction {
                             kind: InstructionKind::Mov {
-                                src: lhs,
+                                src: lhs.clone(),
                                 dest: Operand::Register(Register::R10),
                             },
                             debug_info: debug_info.with_additional(format!("(cmp stack) {} -> %r10", lhs)),
                         },
                         Instruction {
-                            kind: InstructionKind::Cmp(Operand::Register(Register::R10), rhs),
+                            kind: InstructionKind::Cmp(Operand::Register(Register::R10), rhs.clone()),
                             debug_info: debug_info.with_additional(format!("(cmp stack) %r10 -> {}", rhs)),
                         }
                     );
@@ -429,13 +428,13 @@ fn alloc_stack_and_resolve_stack_ops(prog: &mut Program) {
                     replace_instruction!(func.body; [index] =>
                         Instruction {
                             kind: InstructionKind::Mov {
-                                src: rhs,
+                                src: rhs.clone(),
                                 dest: Operand::Register(Register::R11),
                             },
                             debug_info: debug_info.with_additional(format!("(cmp imm) {} -> %r11", rhs)),
                         },
                         Instruction {
-                            kind: InstructionKind::Cmp(lhs, Operand::Register(Register::R11)),
+                            kind: InstructionKind::Cmp(lhs.clone(), Operand::Register(Register::R11)),
                             debug_info: debug_info.with_additional(format!("(cmp imm) cmp {}, {}", lhs, rhs)),
                         }
                     );
@@ -444,7 +443,7 @@ fn alloc_stack_and_resolve_stack_ops(prog: &mut Program) {
                     replace_instruction!(func.body; [index] =>
                         Instruction {
                             kind: InstructionKind::Mov {
-                                src: imm,
+                                src: imm.clone(),
                                 dest: Operand::Register(Register::R10),
                             },
                             debug_info: debug_info.with_additional(format!("(idiv imm) {} -> %r10", imm)),

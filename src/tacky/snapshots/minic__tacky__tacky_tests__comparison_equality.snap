@@ -7,37 +7,39 @@ body:
   - Binary:
       op: Equal
       dest:
-        Var: 0
+        Var: pv.0
       left:
         Constant: 1
       right:
         Constant: 1
   - JumpIfZero:
-      - Var: 0
+      - Var: pv.0
       - and_false.1_32
   - Binary:
       op: NotEqual
       dest:
-        Var: 1
+        Var: pv.1
       left:
         Constant: 2
       right:
         Constant: 3
   - JumpIfZero:
-      - Var: 1
+      - Var: pv.1
       - and_false.1_32
   - Copy:
       dest:
-        Var: 2
+        Var: pv.2
       src:
         Constant: 1
   - Jump: and_end.1_32
   - Label: and_false.1_32
   - Copy:
       dest:
-        Var: 2
+        Var: pv.2
       src:
         Constant: 0
   - Label: and_end.1_32
   - Return:
-      Var: 2
+      Var: pv.2
+  - Return:
+      Constant: 0

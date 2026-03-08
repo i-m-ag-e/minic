@@ -33,6 +33,10 @@ impl SourceFile {
         &self.filename
     }
 
+    pub fn get_tokens_checked(&self) -> &[Token] {
+        self.tokens.as_ref().expect("SourceFile::get_tokens_checked should not be called before used tokens have been filtered and set")
+    }
+
     pub fn line_col(&self, pos: usize) -> (usize, usize) {
         let mut line = 0;
         for (i, &start) in self.line_starts.iter().enumerate() {
