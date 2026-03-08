@@ -12,35 +12,37 @@ body:
       - and_false.1_27
   - Copy:
       dest:
-        Var: 0
+        Var: pv.0
       src:
         Constant: 1
   - Jump: and_end.1_27
   - Label: and_false.1_27
   - Copy:
       dest:
-        Var: 0
+        Var: pv.0
       src:
         Constant: 0
   - Label: and_end.1_27
   - JumpIfNotZero:
-      - Var: 0
+      - Var: pv.0
       - or_true.1_32
   - JumpIfNotZero:
       - Constant: 1
       - or_true.1_32
   - Copy:
       dest:
-        Var: 1
+        Var: pv.1
       src:
         Constant: 0
   - Jump: or_end.1_32
   - Label: or_true.1_32
   - Copy:
       dest:
-        Var: 1
+        Var: pv.1
       src:
         Constant: 1
   - Label: or_end.1_32
   - Return:
-      Var: 1
+      Var: pv.1
+  - Return:
+      Constant: 0
