@@ -1,15 +1,16 @@
 use crate::{source_file::SourcePosition, symbol::Symbol};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Literal {
     Integer(i64),
     Float(f64),
     Bool(bool),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TokenType {
     // punctuation
+    Colon,
     Comma,
     Dot,
     LeftBrace,
@@ -52,6 +53,7 @@ pub enum TokenType {
     PercentAssign,
     Plus,
     PlusAssign,
+    QuestionMark,
     RightShift,
     RightShiftAssign,
     Slash,
@@ -60,6 +62,7 @@ pub enum TokenType {
     // keywords
     KElse,
     KFor,
+    KGoto,
     KIf,
     KInt,
     KReturn,
@@ -74,7 +77,7 @@ pub enum TokenType {
 
 pub type TokenID = usize;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Token {
     pub token_type: TokenType,
     pub begin: SourcePosition,

@@ -18,7 +18,7 @@ fn compile_to_asm_string(s: &str) -> anyhow::Result<String> {
     let tokens = lexer.collect::<LexerResult<Vec<_>>>()?;
 
     let mut used_tokens = vec![false; tokens.len()];
-    let mut parser = Parser::new(&tokens, &mut used_tokens);
+    let mut parser = Parser::new(&tokens, &mut used_tokens, &symbol_table);
     let ast_program = parser.parse()?;
     input.set_tokens(Parser::filter_saved_tokens(tokens, &mut used_tokens));
 

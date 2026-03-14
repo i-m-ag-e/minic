@@ -137,7 +137,8 @@ impl InstructionKind {
             | BinaryOp::Greater
             | BinaryOp::GreaterEqual
             | BinaryOp::LessThan
-            | BinaryOp::LessEqual => {
+            | BinaryOp::LessEqual
+            | BinaryOp::Ternary => {
                 panic!("Logical operations should be handled separately with JmpCC and SetCC")
             }
             BinaryOp::Assign => panic!(

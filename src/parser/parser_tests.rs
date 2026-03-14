@@ -58,6 +58,15 @@ impl<'a> ExprRefVisitor<Value> for JsonVisitor<'a> {
         })
     }
 
+    fn visit_conditional_expr(&mut self, expr: &expr::ConditionalExpr) -> Value {
+        json!({
+            "type": "ConditionalExpr",
+            "condition": self.visit_expr(&expr.condition),
+            "then_expr": self.visit_expr(&expr.then_expr),
+            "else_expr": self.visit_expr(&expr.else_expr),
+        })
+    }
+
     fn visit_constant(&mut self, expr: &WithToken<Literal>) -> Value {
         json!({
             "type": format!("Constant({:?})", expr.item),
@@ -90,6 +99,31 @@ impl<'a> StmtRefVisitor<Value> for JsonVisitor<'a> {
         json!({
             "type": "ExprStmt",
             "expr": self.visit_expr(stmt),
+        })
+    }
+
+    fn visit_goto_stmt(&mut self, stmt: &WithToken<String>) -> Value {
+        json!({
+            "type": "GotoStmt",
+            "label": stmt.item,
+            "token": self.visit_token_short(stmt.get_token(&self.tokens)),
+        })
+    }
+
+    fn visit_if_stmt(&mut self, stmt: &IfStmt) -> Value {
+        json!({
+            "type": "IfStmt",
+            "condition": self.visit_expr(&stmt.condition),
+            "then_stmt": self.visit_stmt(&stmt.then_stmt),
+            "else_stmt": stmt.else_stmt.as_ref().map(|s| self.visit_stmt(s)),
+        })
+    }
+
+    fn visit_label_stmt(&mut self, stmt: &Label) -> Value {
+        json!({
+            "type": "LabelStmt",
+            "label": *stmt.name,
+            "token": self.visit_token_short(stmt.name.get_token(&self.tokens)),
         })
     }
 
@@ -154,7 +188,7 @@ fn test_string_success(s: &str) -> anyhow::Result<Value> {
     let tokens: Vec<Token> = lexer.collect::<LexerResult<Vec<_>>>()?;
 
     let mut used_tokens = vec![false; tokens.len()];
-    let mut parser = parser::Parser::new(&tokens, &mut used_tokens);
+    let mut parser = parser::Parser::new(&tokens, &mut used_tokens, &json_visitor.symbol_table);
     let prog = parser.parse()?;
 
     json_visitor.tokens = Parser::filter_saved_tokens(tokens, &mut used_tokens);

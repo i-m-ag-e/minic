@@ -4,6 +4,12 @@ use crate::source_file::SourcePosition;
 
 #[derive(Debug, Clone, Error)]
 pub enum ResolverErrorType {
+    #[error("Duplicate label definition: previous declaration at {prev_line}:{prev_col}")]
+    DuplicateLabel {
+        label: String,
+        prev_line: usize,
+        prev_col: usize,
+    },
     #[error("Invalid assignment target")]
     InvalidLValue,
     #[error("Undefined variable: {0}")]

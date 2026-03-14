@@ -3,7 +3,7 @@ use std::fmt::Display;
 use serde::Serialize;
 
 use crate::{
-    lexer::token::{Literal, TokenID, TokenType},
+    lexer::token::{Literal, TokenType},
     symbol::Symbol,
     with_token::WithToken,
 };
@@ -12,21 +12,10 @@ use crate::{
 pub enum Expr {
     Assignment(AssignExpr),
     Binary(BinaryExpr),
+    Conditional(ConditionalExpr),
     Constant(WithToken<Literal>),
     Unary(UnaryExpr),
     Variable(WithToken<Symbol>),
-}
-
-impl Expr {
-    pub fn token(&self) -> TokenID {
-        match self {
-            Expr::Assignment(assign) => assign.eq_token.token_id,
-            Expr::Binary(binary_expr) => binary_expr.operator.token_id,
-            Expr::Constant(lit) => lit.token_id,
-            Expr::Unary(unary_expr) => unary_expr.operator.token_id,
-            Expr::Variable(var) => var.token_id,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -67,6 +56,7 @@ pub enum BinaryOp {
     RightShiftAssign,
     Subtract,
     SubtractAssign,
+    Ternary, // for the '?' in conditional expressions
 }
 
 impl BinaryOp {
@@ -83,6 +73,7 @@ impl BinaryOp {
             | BinaryOp::MultiplyAssign
             | BinaryOp::RightShiftAssign
             | BinaryOp::SubtractAssign => Some(50),
+            BinaryOp::Ternary => Some(55),
             BinaryOp::Or => Some(60),
             BinaryOp::And => Some(65),
             BinaryOp::BitOr => Some(70),
@@ -104,27 +95,27 @@ impl BinaryOp {
         }
     }
 
-    pub fn from_compound_assign(token_type: &TokenType) -> Option<Self> {
-        match token_type {
-            TokenType::PlusAssign => Some(BinaryOp::Add),
-            TokenType::BitAndAssign => Some(BinaryOp::BitAnd),
-            TokenType::BitOrAssign => Some(BinaryOp::BitOr),
-            TokenType::BitXorAssign => Some(BinaryOp::BitXor),
-            TokenType::SlashAssign => Some(BinaryOp::Divide),
-            TokenType::LeftShiftAssign => Some(BinaryOp::LeftShift),
-            TokenType::RightShiftAssign => Some(BinaryOp::RightShift),
-            TokenType::MinusAssign => Some(BinaryOp::Subtract),
-            TokenType::AsteriskAssign => Some(BinaryOp::Multiply),
-            TokenType::PercentAssign => Some(BinaryOp::Modulus),
+    pub fn compound_assign_to_binop(&self) -> Option<Self> {
+        match self {
+            BinaryOp::AddAssign => Some(BinaryOp::Add),
+            BinaryOp::BitAndAssign => Some(BinaryOp::BitAnd),
+            BinaryOp::BitOrAssign => Some(BinaryOp::BitOr),
+            BinaryOp::BitXorAssign => Some(BinaryOp::BitXor),
+            BinaryOp::DivideAssign => Some(BinaryOp::Divide),
+            BinaryOp::LeftShiftAssign => Some(BinaryOp::LeftShift),
+            BinaryOp::RightShiftAssign => Some(BinaryOp::RightShift),
+            BinaryOp::SubtractAssign => Some(BinaryOp::Subtract),
+            BinaryOp::MultiplyAssign => Some(BinaryOp::Multiply),
+            BinaryOp::ModulusAssign => Some(BinaryOp::Modulus),
             _ => None,
         }
     }
 }
 
-impl TryFrom<&TokenType> for BinaryOp {
+impl TryFrom<TokenType> for BinaryOp {
     type Error = ();
 
-    fn try_from(value: &TokenType) -> Result<Self, Self::Error> {
+    fn try_from(value: TokenType) -> Result<Self, Self::Error> {
         match value {
             TokenType::Plus => Ok(BinaryOp::Add),
             TokenType::PlusAssign => Ok(BinaryOp::AddAssign),
@@ -155,6 +146,7 @@ impl TryFrom<&TokenType> for BinaryOp {
             TokenType::RightShiftAssign => Ok(BinaryOp::RightShiftAssign),
             TokenType::Minus => Ok(BinaryOp::Subtract),
             TokenType::MinusAssign => Ok(BinaryOp::SubtractAssign),
+            TokenType::QuestionMark => Ok(BinaryOp::Ternary),
             _ => Err(()),
         }
     }
@@ -192,6 +184,7 @@ impl Display for BinaryOp {
             BinaryOp::RightShiftAssign => ">>=",
             BinaryOp::Subtract => "-",
             BinaryOp::SubtractAssign => "-=",
+            BinaryOp::Ternary => "?",
         };
         write!(f, "{}", op_str)
     }
@@ -204,6 +197,13 @@ pub struct BinaryExpr {
     pub right: Box<Expr>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConditionalExpr {
+    pub condition: Box<Expr>,
+    pub then_expr: WithToken<Box<Expr>>, // captures the '?' token
+    pub else_expr: WithToken<Box<Expr>>, // captures the ':' token
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub enum UnaryOp {
     BitNot,
@@ -213,10 +213,10 @@ pub enum UnaryOp {
     Not,
 }
 
-impl TryFrom<&TokenType> for UnaryOp {
+impl TryFrom<TokenType> for UnaryOp {
     type Error = ();
 
-    fn try_from(value: &TokenType) -> Result<Self, Self::Error> {
+    fn try_from(value: TokenType) -> Result<Self, Self::Error> {
         match value {
             TokenType::BitNot => Ok(UnaryOp::BitNot),
             TokenType::Decrement => Ok(UnaryOp::Decrement),
@@ -251,6 +251,7 @@ pub struct UnaryExpr {
 pub trait ExprVisitor<R> {
     fn visit_assignment_expr(&mut self, expr: AssignExpr) -> R;
     fn visit_binary_expr(&mut self, expr: BinaryExpr) -> R;
+    fn visit_conditional_expr(&mut self, expr: ConditionalExpr) -> R;
     fn visit_constant(&mut self, expr: WithToken<Literal>) -> R;
     fn visit_unary_expr(&mut self, expr: UnaryExpr) -> R;
     fn visit_variable(&mut self, var: WithToken<Symbol>) -> R;
@@ -259,6 +260,7 @@ pub trait ExprVisitor<R> {
         match expr {
             Expr::Assignment(assign) => self.visit_assignment_expr(assign),
             Expr::Binary(binary_expr) => self.visit_binary_expr(binary_expr),
+            Expr::Conditional(conditional_expr) => self.visit_conditional_expr(conditional_expr),
             Expr::Constant(lit) => self.visit_constant(lit),
             Expr::Unary(unary_expr) => self.visit_unary_expr(unary_expr),
             Expr::Variable(var) => self.visit_variable(var),
@@ -269,6 +271,7 @@ pub trait ExprVisitor<R> {
 pub trait ExprRefVisitor<R> {
     fn visit_assignment_expr(&mut self, expr: &AssignExpr) -> R;
     fn visit_binary_expr(&mut self, expr: &BinaryExpr) -> R;
+    fn visit_conditional_expr(&mut self, expr: &ConditionalExpr) -> R;
     fn visit_constant(&mut self, expr: &WithToken<Literal>) -> R;
     fn visit_unary_expr(&mut self, expr: &UnaryExpr) -> R;
     fn visit_variable(&mut self, var: &WithToken<Symbol>) -> R;
@@ -277,6 +280,7 @@ pub trait ExprRefVisitor<R> {
         match expr {
             Expr::Assignment(assign) => self.visit_assignment_expr(assign),
             Expr::Binary(binary_expr) => self.visit_binary_expr(binary_expr),
+            Expr::Conditional(conditional_expr) => self.visit_conditional_expr(conditional_expr),
             Expr::Constant(lit) => self.visit_constant(lit),
             Expr::Unary(unary_expr) => self.visit_unary_expr(unary_expr),
             Expr::Variable(var) => self.visit_variable(var),

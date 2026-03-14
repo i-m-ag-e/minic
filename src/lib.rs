@@ -5,6 +5,7 @@ mod lexer;
 mod parser;
 mod pretty_print;
 mod resolver;
+mod semantic_analyzer;
 pub mod source_file;
 mod symbol;
 mod tacky;
@@ -32,6 +33,7 @@ use crate::{
     lexer::{LexerResult, token::TokenType},
     parser::Parser,
     resolver::Resolver,
+    semantic_analyzer::SemanticAnalyzer,
     source_file::SourcePosition,
 };
 
@@ -61,6 +63,9 @@ pub struct Cli {
     /// only run till the resolve stage
     #[arg(long)]
     validate: bool,
+
+    #[arg(long)]
+    analyze: bool,
 
     /// only run till the codegen phase
     #[arg(long)]
@@ -98,6 +103,7 @@ pub fn assemble(
     stop_at_parse: bool,
     stop_at_tacky: bool,
     stop_at_resolve: bool,
+    stop_at_analyze: bool,
     stop_at_codegen: bool,
     no_stdout: bool,
     no_comments: bool,
@@ -130,7 +136,7 @@ pub fn assemble(
 
     let prog = if !stop_at_lex {
         let mut used_tokens = vec![false; tokens.len()];
-        let mut parser = Parser::new(&tokens, &mut used_tokens);
+        let mut parser = Parser::new(&tokens, &mut used_tokens, &interner);
 
         let prog = parser.parse()?;
         source_file.set_tokens(Parser::filter_saved_tokens(tokens, &mut used_tokens));
@@ -148,7 +154,7 @@ pub fn assemble(
         return Ok(String::new());
     };
 
-    let (prog, new_symbol_table) = if !stop_at_parse {
+    let (prog, (new_symbol_table, labels)) = if !stop_at_parse {
         let mut resolver = Resolver::new(interner, source_file);
         let prog = resolver.visit_program(prog)?;
 
@@ -177,7 +183,22 @@ pub fn assemble(
             );
             pretty_printer.visit_program(&prog);
         }
-        (prog, resolver.release_symbol_table())
+        (prog, resolver.release_symbol_table_and_labels())
+    } else {
+        return Ok(String::new());
+    };
+
+    let prog = if !stop_at_analyze {
+        let mut analyzer = SemanticAnalyzer::new(source_file, labels);
+        let prog = analyzer.visit_program(prog)?;
+        if debug {
+            let mut pretty_printer = pretty_print::PrettyPrinter::new(
+                &new_symbol_table,
+                Box::new(|table, sym| table.resolve(sym)),
+            );
+            pretty_printer.visit_program(&prog);
+        }
+        prog
     } else {
         return Ok(String::new());
     };
@@ -319,6 +340,7 @@ pub fn compile(cli: &Cli) -> anyhow::Result<()> {
             cli.parse,
             cli.tacky,
             cli.validate,
+            cli.analyze,
             cli.codegen,
             cli.no_stdout,
             cli.no_comments,
