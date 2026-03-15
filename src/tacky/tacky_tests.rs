@@ -17,7 +17,7 @@ fn test_string_success(s: &str) -> anyhow::Result<Program> {
     let tokens = lexer.collect::<LexerResult<Vec<_>>>()?;
     let mut used_tokens = vec![false; tokens.len()];
 
-    let mut parser = Parser::new(&tokens, &mut used_tokens);
+    let mut parser = Parser::new(&tokens, &mut used_tokens, &symbol_table);
     let prog = parser.parse()?;
     input.set_tokens(Parser::filter_saved_tokens(tokens, &mut used_tokens));
 

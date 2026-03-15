@@ -1,8 +1,8 @@
 use crate::{
     ast::{
         ASTRefVisitor, BlockItem,
-        expr::{ExprRefVisitor, UnaryOp},
-        stmt::StmtRefVisitor,
+        expr::ExprRefVisitor,
+        stmt::{Label, StmtRefVisitor},
     },
     symbol::Symbol,
     with_token::WithToken,
@@ -43,6 +43,16 @@ impl<'a, Table> ExprRefVisitor<()> for PrettyPrinter<'a, Table> {
         print!(")");
     }
 
+    fn visit_conditional_expr(&mut self, expr: &crate::ast::expr::ConditionalExpr) -> () {
+        print!("(");
+        self.visit_expr(&expr.condition);
+        print!(" ? ");
+        self.visit_expr(&expr.then_expr);
+        print!(" : ");
+        self.visit_expr(&expr.else_expr);
+        print!(")");
+    }
+
     fn visit_constant(
         &mut self,
         expr: &crate::with_token::WithToken<crate::lexer::token::Literal>,
@@ -71,6 +81,34 @@ impl<'a, Table> ExprRefVisitor<()> for PrettyPrinter<'a, Table> {
 impl<'a, Table> StmtRefVisitor<()> for PrettyPrinter<'a, Table> {
     fn visit_null_stmt(&mut self) -> () {
         println!("{}NULL", "  ".repeat(self.indent_level));
+    }
+
+    fn visit_goto_stmt(&mut self, stmt: &WithToken<String>) -> () {
+        let label = &stmt.item;
+        println!("{}GOTO {}", "  ".repeat(self.indent_level), label);
+    }
+
+    fn visit_if_stmt(&mut self, stmt: &crate::ast::stmt::IfStmt) -> () {
+        print!("{}IF ", "  ".repeat(self.indent_level));
+        self.visit_expr(&stmt.condition.item);
+        println!();
+        self.indent_level += 1;
+        self.visit_stmt(&stmt.then_stmt);
+        self.indent_level -= 1;
+        if let Some(else_stmt) = &stmt.else_stmt {
+            println!("{}ELSE", "  ".repeat(self.indent_level));
+            self.indent_level += 1;
+            self.visit_stmt(&else_stmt.item);
+            self.indent_level -= 1;
+        }
+    }
+
+    fn visit_label_stmt(&mut self, stmt: &Label) -> () {
+        let label_name = &stmt.name.item;
+        println!("{}LABEL {}:", "  ".repeat(self.indent_level), label_name);
+        self.indent_level += 1;
+        self.visit_stmt(&stmt.next_stmt);
+        self.indent_level -= 1;
     }
 
     fn visit_return_stmt(&mut self, stmt: &WithToken<Option<crate::ast::expr::Expr>>) -> () {

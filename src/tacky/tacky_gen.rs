@@ -4,7 +4,7 @@ use crate::{
     ast::{
         self, ASTRefVisitor,
         expr::{self, BinaryOp, ExprRefVisitor, UnaryOp},
-        stmt::StmtRefVisitor,
+        stmt::{Label, StmtRefVisitor},
     },
     lexer::token::{Literal, TokenID},
     resolver::var_map::VarMap,
@@ -203,6 +203,47 @@ impl<'a> ExprRefVisitor<Value> for TackyGen<'a> {
         }
     }
 
+    fn visit_conditional_expr(&mut self, expr: &expr::ConditionalExpr) -> Value {
+        let cond_val = self.visit_expr(&expr.condition);
+        let dest_var = self.make_var();
+        let else_label = self.make_logic_label("conditional", "else", expr.then_expr.token_id);
+        let end_label = self.make_logic_label("conditional", "end", expr.else_expr.token_id);
+
+        self.emit_with_message(
+            InstructionKind::JumpIfZero(cond_val.clone(), else_label.clone()),
+            expr.then_expr.token_id,
+            "(?:) condition",
+        );
+
+        let then_val = self.visit_expr(&expr.then_expr);
+        self.emit_with_message(
+            InstructionKind::Copy {
+                dest: dest_var.clone(),
+                src: then_val,
+            },
+            expr.then_expr.token_id,
+            "(?:) copy result of <then> into result of (?:)",
+        );
+        self.emit_with_message(
+            InstructionKind::Jump(end_label.clone()),
+            expr.then_expr.token_id,
+            "(?:) jump to end after <then>",
+        );
+
+        self.emit(InstructionKind::Label(else_label), expr.else_expr.token_id);
+        let else_val = self.visit_expr(&expr.else_expr);
+        self.emit_with_message(
+            InstructionKind::Copy {
+                dest: dest_var.clone(),
+                src: else_val,
+            },
+            expr.else_expr.token_id,
+            "(?:) copy result of <else> into result of (?:)",
+        );
+        self.emit(InstructionKind::Label(end_label), expr.else_expr.token_id);
+        dest_var
+    }
+
     fn visit_constant(&mut self, expr: &WithToken<Literal>) -> Value {
         match expr.item {
             Literal::Integer(i) => Value::Constant(i),
@@ -289,6 +330,51 @@ impl<'a> ExprRefVisitor<Value> for TackyGen<'a> {
 impl<'a> StmtRefVisitor<()> for TackyGen<'a> {
     fn visit_expr_stmt(&mut self, stmt: &expr::Expr) -> () {
         self.visit_expr(stmt);
+    }
+
+    fn visit_goto_stmt(&mut self, stmt: &WithToken<String>) -> () {
+        let label = &stmt.item;
+        self.emit(InstructionKind::Jump(label.to_string()), stmt.token_id);
+    }
+
+    fn visit_if_stmt(&mut self, stmt: &ast::stmt::IfStmt) -> () {
+        let cond_val = self.visit_expr(&stmt.condition);
+        let else_token_id = stmt
+            .else_stmt
+            .as_ref()
+            .map(|else_stmt| else_stmt.token_id)
+            .unwrap_or(stmt.condition.token_id);
+        let else_label = self.make_logic_label("if", "_else", else_token_id);
+        let end_label = self.make_logic_label("if", "end", stmt.condition.token_id);
+
+        self.emit_with_message(
+            InstructionKind::JumpIfZero(cond_val.clone(), else_label.clone()),
+            stmt.condition.token_id,
+            &format!("(if) jump to else if {} is false", cond_val),
+        );
+
+        self.visit_stmt(&stmt.then_stmt);
+        self.emit_with_message(
+            InstructionKind::Jump(end_label.clone()),
+            stmt.condition.token_id,
+            "(if) jump to end after then",
+        );
+
+        self.emit(InstructionKind::Label(else_label), stmt.condition.token_id);
+        if let Some(else_stmt) = &stmt.else_stmt {
+            self.visit_stmt(else_stmt);
+        }
+
+        self.emit(InstructionKind::Label(end_label), stmt.condition.token_id);
+    }
+
+    fn visit_label_stmt(&mut self, stmt: &Label) -> () {
+        let label = &stmt.name.item;
+        self.emit(
+            InstructionKind::Label(label.to_string()),
+            stmt.name.token_id,
+        );
+        self.visit_stmt(&stmt.next_stmt);
     }
 
     fn visit_null_stmt(&mut self) -> () {}

@@ -48,6 +48,7 @@ lazy_static! {
     static ref KW_LIST: Vec<(&'static str, TokenType)> = vec![
         ("else", TokenType::KElse),
         ("false", TokenType::Literal(Literal::Bool(false))),
+        ("goto", TokenType::KGoto),
         ("for", TokenType::KFor),
         ("if", TokenType::KIf),
         ("int", TokenType::KInt),
@@ -256,11 +257,13 @@ impl<'a> Lexer<'a> {
         let next_char = self.cursor.peek().unwrap();
 
         match next_char {
+            ':' => single_char_tok!(self, TokenType::Colon),
             ',' => single_char_tok!(self, TokenType::Comma),
             '.' => single_char_tok!(self, TokenType::Dot),
             '{' => single_char_tok!(self, TokenType::LeftBrace),
             '(' => single_char_tok!(self, TokenType::LeftParen),
             '[' => single_char_tok!(self, TokenType::LeftSquare),
+            '?' => single_char_tok!(self, TokenType::QuestionMark),
             '}' => single_char_tok!(self, TokenType::RightBrace),
             ')' => single_char_tok!(self, TokenType::RightParen),
             ']' => single_char_tok!(self, TokenType::RightSquare),
