@@ -5,19 +5,18 @@ use std::collections::HashMap;
 
 use crate::{
     ast::{
-        self, ASTVisitor, BlockItem, FunctionDef, Program, VarDeclaration,
+        self, ASTVisitor, Block, BlockItem, FunctionDef, Program, VarDeclaration,
         expr::{AssignExpr, Expr, ExprVisitor, UnaryOp},
         stmt::{Stmt, StmtVisitor},
     },
     resolver::{
         resolver_error::{ResolverError, ResolverErrorType, ResolverWarning, ResolverWarningType},
-        var_map::VarMap,
+        var_map::ScopedVarMap,
     },
     source_file::SourceFile,
     symbol::{Symbol, SymbolTable},
     with_token::WithToken,
 };
-use anyhow;
 
 pub type LabelMap = HashMap<String, WithToken<()>>;
 
@@ -28,7 +27,7 @@ pub struct Resolver<'a> {
     labels: LabelMap,
     source_file: &'a SourceFile,
     symbol_table: SymbolTable,
-    var_map: VarMap,
+    var_map: ScopedVarMap,
     warnings: Vec<ResolverWarning>,
 }
 
@@ -40,18 +39,18 @@ impl<'a> Resolver<'a> {
             current_function: None,
             current_function_return: false,
             labels: LabelMap::new(),
-            var_map: VarMap::new(),
+            var_map: ScopedVarMap::new(),
             source_file,
             symbol_table,
             warnings: Vec::new(),
         }
     }
 
-    pub fn symbol_table(&self) -> &VarMap {
+    pub fn symbol_table(&self) -> &ScopedVarMap {
         &self.var_map
     }
 
-    pub fn release_symbol_table_and_labels(self) -> (VarMap, LabelMap) {
+    pub fn release_symbol_table_and_labels(self) -> (ScopedVarMap, LabelMap) {
         (self.var_map, self.labels)
     }
 
@@ -76,35 +75,34 @@ impl<'a> Resolver<'a> {
             .expect("identifier should have been interned during lexing");
         Ok(name_str)
     }
+
+    fn begin_scope(&mut self) {
+        self.var_map.add_scope();
+    }
+
+    fn end_scope(&mut self) {
+        self.var_map.unwind();
+    }
 }
 
 impl<'a> ExprVisitor<ResolverResult<Expr>> for Resolver<'a> {
     fn visit_assignment_expr(&mut self, expr: ast::expr::AssignExpr) -> ResolverResult<Expr> {
         let AssignExpr {
             target: left,
-            eq_token: tok,
+            eq_token,
             right,
         } = expr;
 
-        if let Expr::Variable(name) = *left {
-            let name_str = self.resolve_st_assert_exists(&name.item)?;
-
-            if let Some(resolved_sym) = self.var_map.get(&name_str) {
-                let right = Box::new(self.visit_expr(*right)?);
-                Ok(Expr::Assignment(AssignExpr {
-                    target: Box::new(Expr::Variable(name.with_value(*resolved_sym))),
-                    right,
-                    eq_token: tok,
-                }))
-            } else {
-                let token = tok.get_token(&self.source_file.get_tokens_checked());
-                Err(ResolverError {
-                    err_type: ResolverErrorType::UndefinedVariable(name_str.to_string()),
-                    span: (token.begin, token.end),
-                })
-            }
+        if let Expr::Variable(_) = *left {
+            let left = self.visit_expr(*left)?;
+            let right = self.visit_expr(*right)?;
+            Ok(Expr::Assignment(AssignExpr {
+                target: Box::new(left),
+                eq_token,
+                right: Box::new(right),
+            }))
         } else {
-            let token = tok.get_token(&self.source_file.get_tokens_checked());
+            let token = eq_token.get_token(&self.source_file.get_tokens_checked());
             Err(ResolverError {
                 err_type: ResolverErrorType::InvalidLValue,
                 span: (token.begin, token.end),
@@ -171,7 +169,7 @@ impl<'a> ExprVisitor<ResolverResult<Expr>> for Resolver<'a> {
 
     fn visit_variable(&mut self, var: WithToken<Symbol>) -> ResolverResult<Expr> {
         let name_str = self.resolve_st_assert_exists(&var.item)?;
-        if let Some(resolved_sym) = self.var_map.get(name_str) {
+        if let Some(resolved_sym) = self.var_map.lookup(&name_str) {
             Ok(Expr::Variable(resolved_sym))
         } else {
             Err(ResolverError {
@@ -183,6 +181,10 @@ impl<'a> ExprVisitor<ResolverResult<Expr>> for Resolver<'a> {
 }
 
 impl<'a> StmtVisitor<ResolverResult<Stmt>> for Resolver<'a> {
+    fn visit_compound(&mut self, block: ast::Block) -> ResolverResult<Stmt> {
+        Ok(Stmt::Compound(self.visit_block(block)?))
+    }
+
     fn visit_expr_stmt(&mut self, expr: Expr) -> ResolverResult<Stmt> {
         let expr = self.visit_expr(expr)?;
         Ok(Stmt::Expr(expr))
@@ -266,6 +268,7 @@ impl<'a> ASTVisitor for Resolver<'a> {
     type StmtResult = ResolverResult<Stmt>;
     type ExprResult = ResolverResult<Expr>;
     type BlockItemResult = ResolverResult<BlockItem>;
+    type BlockResult = ResolverResult<Block>;
     type FunctionDefResult = ResolverResult<FunctionDef>;
     type ProgramResult = ResolverResult<Program>;
     type VarDeclResult = ResolverResult<VarDeclaration>;
@@ -284,13 +287,8 @@ impl<'a> ASTVisitor for Resolver<'a> {
         self.current_function = Some(func_def.name.clone());
         self.current_function_return = false;
 
-        let mut resolved_body = None;
-        if let Some(body) = func_def.body {
-            let mut resolved_block_items = Vec::new();
-            for item in body {
-                resolved_block_items.push(self.visit_block_item(item)?);
-            }
-            resolved_body = Some(resolved_block_items);
+        let resolved_body = if let Some(body) = func_def.body {
+            let resolved_body = self.visit_block(body)?;
 
             if !self.current_function_return && func_def.name.item != "main" {
                 let token = func_def
@@ -303,7 +301,10 @@ impl<'a> ASTVisitor for Resolver<'a> {
                     location: token.span(),
                 });
             }
-        }
+            Some(resolved_body)
+        } else {
+            None
+        };
 
         Ok(FunctionDef {
             name: func_def.name,
@@ -318,11 +319,28 @@ impl<'a> ASTVisitor for Resolver<'a> {
         }
     }
 
+    fn visit_block(&mut self, block: Block) -> Self::BlockResult {
+        self.begin_scope();
+
+        let new_body = block
+            .body
+            .into_iter()
+            .map(|block_item| self.visit_block_item(block_item))
+            .collect::<Result<_, _>>()?;
+
+        self.end_scope();
+
+        Ok(Block {
+            body: new_body,
+            block_begin: block.block_begin,
+        })
+    }
+
     fn visit_var_decl(&mut self, var_decl: VarDeclaration) -> Self::VarDeclResult {
         let name_str = self.resolve_st_assert_exists(&var_decl.name.item)?;
         let updated_name = self.updated_variable_name(name_str, &var_decl.name);
 
-        if let Some(sym) = self.var_map.get(&name_str) {
+        if let Some(sym) = self.var_map.current_scope().get(name_str) {
             let cur_decl_token = var_decl
                 .name
                 .get_token(&self.source_file.get_tokens_checked());

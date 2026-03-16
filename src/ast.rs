@@ -1,6 +1,7 @@
 pub mod expr;
 pub mod stmt;
 
+use crate::ast::stmt::Stmt;
 use crate::with_token::WithToken;
 use crate::{
     ast::{
@@ -9,7 +10,6 @@ use crate::{
     },
     symbol::Symbol,
 };
-use stmt::Stmt;
 
 #[derive(Debug, Clone)]
 pub struct Program {
@@ -20,7 +20,13 @@ pub struct Program {
 pub struct FunctionDef {
     pub name: WithToken<String>,
     // pub params: Vec<String>,
-    pub body: Option<Vec<BlockItem>>,
+    pub body: Option<Block>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Block {
+    pub body: Vec<BlockItem>,
+    pub block_begin: WithToken<()>,
 }
 
 #[derive(Debug, Clone)]
@@ -37,6 +43,7 @@ pub struct VarDeclaration {
 
 pub trait ASTVisitor: StmtVisitor<Self::StmtResult> + ExprVisitor<Self::ExprResult> {
     type BlockItemResult;
+    type BlockResult;
     type ExprResult;
     type FunctionDefResult;
     type ProgramResult;
@@ -46,6 +53,7 @@ pub trait ASTVisitor: StmtVisitor<Self::StmtResult> + ExprVisitor<Self::ExprResu
     fn visit_program(&mut self, program: Program) -> Self::ProgramResult;
     fn visit_function_def(&mut self, func_def: FunctionDef) -> Self::FunctionDefResult;
     fn visit_block_item(&mut self, item: BlockItem) -> Self::BlockItemResult;
+    fn visit_block(&mut self, block: Block) -> Self::BlockResult;
 
     fn visit_var_decl(&mut self, var_decl: VarDeclaration) -> Self::VarDeclResult;
 }
@@ -54,6 +62,7 @@ pub trait ASTRefVisitor:
     StmtRefVisitor<Self::StmtResult> + ExprRefVisitor<Self::ExprResult>
 {
     type BlockItemResult;
+    type BlockResult;
     type ExprResult;
     type FunctionDefResult;
     type ProgramResult;
@@ -63,6 +72,7 @@ pub trait ASTRefVisitor:
     fn visit_program(&mut self, program: &Program) -> Self::ProgramResult;
     fn visit_function_def(&mut self, func_def: &FunctionDef) -> Self::FunctionDefResult;
     fn visit_block_item(&mut self, item: &BlockItem) -> Self::BlockItemResult;
+    fn visit_block(&mut self, block: &Block) -> Self::BlockResult;
 
     fn visit_var_decl(&mut self, var_decl: &VarDeclaration) -> Self::VarDeclResult;
 }

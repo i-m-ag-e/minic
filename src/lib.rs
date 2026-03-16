@@ -64,6 +64,7 @@ pub struct Cli {
     #[arg(long)]
     validate: bool,
 
+    /// only run till the semantic analysis stage
     #[arg(long)]
     analyze: bool,
 
@@ -188,7 +189,7 @@ pub fn assemble(
         return Ok(String::new());
     };
 
-    let prog = if !stop_at_analyze {
+    let prog = if !stop_at_resolve {
         let mut analyzer = SemanticAnalyzer::new(source_file, labels);
         let prog = analyzer.visit_program(prog)?;
         if debug {
@@ -203,7 +204,7 @@ pub fn assemble(
         return Ok(String::new());
     };
 
-    let tacky_prog = if !stop_at_resolve {
+    let tacky_prog = if !stop_at_analyze {
         let mut tacky_gen = tacky::tacky_gen::TackyGen::new(source_file, &new_symbol_table);
         let tacky_prog = tacky_gen.visit_program(&prog);
         if debug {

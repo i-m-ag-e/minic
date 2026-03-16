@@ -95,6 +95,14 @@ impl<'a> ExprRefVisitor<Value> for JsonVisitor<'a> {
 }
 
 impl<'a> StmtRefVisitor<Value> for JsonVisitor<'a> {
+    fn visit_compound(&mut self, block: &crate::ast::Block) -> Value {
+        json!({
+            "type": "Compound",
+            "block": self.visit_block(block),
+            "token": self.visit_token_short(block.block_begin.get_token(&self.tokens))
+        })
+    }
+
     fn visit_expr_stmt(&mut self, stmt: &Expr) -> Value {
         json!({
             "type": "ExprStmt",
@@ -147,6 +155,7 @@ impl<'a> ASTRefVisitor for JsonVisitor<'a> {
     type StmtResult = Value;
     type ExprResult = Value;
     type BlockItemResult = Value;
+    type BlockResult = Value;
     type VarDeclResult = Value;
 
     fn visit_program(&mut self, program: &Program) -> Self::ProgramResult {
@@ -160,7 +169,7 @@ impl<'a> ASTRefVisitor for JsonVisitor<'a> {
         json!({
             "type": "FunctionDef",
             "name": self.visit_token_short(func_def.name.get_token(&self.tokens)),
-            "body": func_def.body.as_ref().map(|stmts| stmts.iter().map(|s| self.visit_block_item(s)).collect::<Vec<_>>()),
+            "body": func_def.body.as_ref().map(|block| self.visit_block(block))
         })
     }
 
@@ -169,6 +178,16 @@ impl<'a> ASTRefVisitor for JsonVisitor<'a> {
             BlockItem::Stmt(stmt) => self.visit_stmt(stmt),
             BlockItem::Decl(decl) => self.visit_var_decl(decl),
         }
+    }
+
+    fn visit_block(&mut self, block: &Block) -> Self::BlockResult {
+        json!(
+            block
+                .body
+                .iter()
+                .map(|block_item| self.visit_block_item(block_item))
+                .collect::<Vec<_>>()
+        )
     }
 
     fn visit_var_decl(&mut self, var_decl: &VarDeclaration) -> Self::VarDeclResult {

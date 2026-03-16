@@ -79,6 +79,10 @@ impl<'a, Table> ExprRefVisitor<()> for PrettyPrinter<'a, Table> {
 }
 
 impl<'a, Table> StmtRefVisitor<()> for PrettyPrinter<'a, Table> {
+    fn visit_compound(&mut self, block: &crate::ast::Block) -> () {
+        self.visit_block(block)
+    }
+
     fn visit_null_stmt(&mut self) -> () {
         println!("{}NULL", "  ".repeat(self.indent_level));
     }
@@ -132,6 +136,7 @@ impl<'a, Table> ASTRefVisitor for PrettyPrinter<'a, Table> {
     type StmtResult = ();
     type ExprResult = ();
     type BlockItemResult = ();
+    type BlockResult = ();
     type VarDeclResult = ();
 
     fn visit_program(&mut self, program: &crate::ast::Program) -> Self::ProgramResult {
@@ -147,9 +152,7 @@ impl<'a, Table> ASTRefVisitor for PrettyPrinter<'a, Table> {
         println!("Function: {}", func_def.name.as_str());
         self.indent_level += 1;
         if let Some(body) = &func_def.body {
-            for item in body {
-                self.visit_block_item(item);
-            }
+            self.visit_block(body)
         } else {
             println!("{}<declaration>", "  ".repeat(self.indent_level));
         }
@@ -161,6 +164,16 @@ impl<'a, Table> ASTRefVisitor for PrettyPrinter<'a, Table> {
             BlockItem::Decl(decl) => self.visit_var_decl(decl),
             BlockItem::Stmt(stmt) => self.visit_stmt(stmt),
         }
+    }
+
+    fn visit_block(&mut self, block: &crate::ast::Block) -> Self::BlockResult {
+        println!("{}{{", "  ".repeat(self.indent_level));
+        self.indent_level += 1;
+        for item in &block.body {
+            self.visit_block_item(item);
+        }
+        self.indent_level -= 1;
+        println!("{}}}", "  ".repeat(self.indent_level));
     }
 
     fn visit_var_decl(&mut self, var_decl: &crate::ast::VarDeclaration) -> Self::VarDeclResult {
