@@ -7,7 +7,7 @@ use crate::{
         stmt::{Label, StmtRefVisitor},
     },
     lexer::token::{Literal, TokenID},
-    resolver::var_map::VarMap,
+    resolver::var_map::ScopedVarMap,
     source_file::SourceFile,
     tacky::{self, Instruction, InstructionKind, Value},
     with_token::WithToken,
@@ -18,11 +18,11 @@ pub struct TackyGen<'a> {
     pub var_count: usize,
     pub current_body: Vec<Instruction>,
     source_file: &'a SourceFile,
-    symbol_table: &'a VarMap,
+    symbol_table: &'a ScopedVarMap,
 }
 
 impl<'a> TackyGen<'a> {
-    pub fn new(source_file: &'a SourceFile, symbol_table: &'a VarMap) -> Self {
+    pub fn new(source_file: &'a SourceFile, symbol_table: &'a ScopedVarMap) -> Self {
         Self {
             var_count: 0,
             current_body: Vec::new(),
@@ -328,6 +328,10 @@ impl<'a> ExprRefVisitor<Value> for TackyGen<'a> {
 }
 
 impl<'a> StmtRefVisitor<()> for TackyGen<'a> {
+    fn visit_compound(&mut self, block: &ast::Block) -> () {
+        self.visit_block(block)
+    }
+
     fn visit_expr_stmt(&mut self, stmt: &expr::Expr) -> () {
         self.visit_expr(stmt);
     }
@@ -395,6 +399,7 @@ impl<'a> ASTRefVisitor for TackyGen<'a> {
     type StmtResult = ();
     type ExprResult = Value;
     type BlockItemResult = ();
+    type BlockResult = ();
     type VarDeclResult = ();
 
     fn visit_function_def(&mut self, func_def: &ast::FunctionDef) -> Self::FunctionDefResult {
@@ -404,9 +409,7 @@ impl<'a> ASTRefVisitor for TackyGen<'a> {
             unimplemented!();
         }
 
-        for item in func_def.body.as_ref().unwrap() {
-            self.visit_block_item(item);
-        }
+        self.visit_block(func_def.body.as_ref().unwrap());
 
         if func_def.name.item == "main" {
             self.emit(
@@ -443,6 +446,13 @@ impl<'a> ASTRefVisitor for TackyGen<'a> {
             ast::BlockItem::Decl(var_decl) => self.visit_var_decl(var_decl),
             ast::BlockItem::Stmt(stmt) => self.visit_stmt(stmt),
         }
+    }
+
+    fn visit_block(&mut self, block: &ast::Block) -> Self::BlockResult {
+        block
+            .body
+            .iter()
+            .for_each(|block_item| self.visit_block_item(block_item));
     }
 
     fn visit_var_decl(&mut self, var_decl: &ast::VarDeclaration) -> Self::VarDeclResult {

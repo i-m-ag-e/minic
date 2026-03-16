@@ -4,7 +4,7 @@ use crate::ast::expr::{
     AssignExpr, BinaryExpr, BinaryOp, ConditionalExpr, Expr, UnaryExpr, UnaryOp,
 };
 use crate::ast::stmt::{IfStmt, Label};
-use crate::ast::{BlockItem, FunctionDef, VarDeclaration};
+use crate::ast::{Block, BlockItem, FunctionDef, VarDeclaration};
 use crate::ast::{Program, stmt::Stmt};
 use crate::lexer::token::{Literal, TokenID};
 use crate::source_file::SourcePosition;
@@ -99,18 +99,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn advance_if<F>(&mut self, condition: F) -> Option<Token>
-    where
-        F: Fn(&Token) -> bool,
-    {
-        if let Some(token) = self.peek() {
-            if condition(&token) {
-                return self.advance();
-            }
-        }
-        None
-    }
-
     fn consume_if<F, E>(&mut self, condition: F, error: E) -> ParseResult<Token>
     where
         F: Fn(TokenType) -> bool,
@@ -162,10 +150,6 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn advance_if_eq(&mut self, expected: &TokenType) -> Option<Token> {
-        self.advance_if(|token| &token.token_type == expected)
-    }
-
     fn make_eof(&self) -> ParserError {
         ParserError {
             err_type: ParserErrorType::UnexpectedEndOfInput,
@@ -212,21 +196,34 @@ impl<'a> Parser<'a> {
         self.consume(TokenType::LeftParen)?;
         self.consume(TokenType::KVoid)?;
         self.consume(TokenType::RightParen)?;
-        self.consume(TokenType::LeftBrace)?;
 
-        let mut body = Vec::new();
-        while self.advance_if_eq(&TokenType::RightBrace).is_none() {
-            if self.is_at_end() {
-                return Err(self.make_eof());
-            }
-            let stmt = self.parse_block_item()?;
-            body.push(stmt);
-        }
+        let body = if let Some(TokenType::LeftBrace) = self.peek_token_type() {
+            Some(self.parse_block()?)
+        } else {
+            None
+        };
 
         Ok(FunctionDef {
             name: WithToken::new("main".to_string(), func_name),
-            body: Some(body),
+            body,
         })
+    }
+
+    fn parse_block(&mut self) -> ParseResult<Block> {
+        self.consume(TokenType::LeftBrace)?;
+        let block_begin = WithToken::new((), self.save_previous());
+        let mut body = Vec::new();
+
+        loop {
+            if let None | Some(TokenType::RightBrace) = self.peek_token_type() {
+                break;
+            }
+
+            body.push(self.parse_block_item()?);
+        }
+
+        self.consume(TokenType::RightBrace)?;
+        Ok(Block { body, block_begin })
     }
 
     fn parse_block_item(&mut self) -> ParseResult<BlockItem> {
@@ -270,6 +267,7 @@ impl<'a> Parser<'a> {
 impl<'a> Parser<'a> {
     fn parse_stmt(&mut self) -> ParseResult<Stmt> {
         match self.peek_token_type() {
+            Some(TokenType::LeftBrace) => Ok(Stmt::Compound(self.parse_block()?)),
             Some(TokenType::KGoto) => self.parse_goto_stmt(),
             Some(TokenType::KIf) => self.parse_if_stmt(),
             Some(TokenType::KReturn) => self.parse_return_stmt(),

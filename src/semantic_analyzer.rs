@@ -76,6 +76,10 @@ impl<'a> ExprVisitor<SemanticResult<expr::Expr>> for SemanticAnalyzer<'a> {
 }
 
 impl<'a> StmtVisitor<SemanticResult<stmt::Stmt>> for SemanticAnalyzer<'a> {
+    fn visit_compound(&mut self, block: ast::Block) -> SemanticResult<stmt::Stmt> {
+        Ok(stmt::Stmt::Compound(self.visit_block(block)?))
+    }
+
     fn visit_expr_stmt(&mut self, stmt: expr::Expr) -> SemanticResult<stmt::Stmt> {
         Ok(stmt::Stmt::Expr(stmt))
     }
@@ -118,6 +122,7 @@ impl<'a> StmtVisitor<SemanticResult<stmt::Stmt>> for SemanticAnalyzer<'a> {
 
 impl<'a> ASTVisitor for SemanticAnalyzer<'a> {
     type BlockItemResult = SemanticResult<ast::BlockItem>;
+    type BlockResult = SemanticResult<ast::Block>;
     type ExprResult = SemanticResult<expr::Expr>;
     type StmtResult = SemanticResult<stmt::Stmt>;
     type FunctionDefResult = SemanticResult<ast::FunctionDef>;
@@ -133,15 +138,21 @@ impl<'a> ASTVisitor for SemanticAnalyzer<'a> {
         }
     }
 
+    fn visit_block(&mut self, block: ast::Block) -> Self::BlockResult {
+        Ok(ast::Block {
+            block_begin: block.block_begin,
+            body: block
+                .body
+                .into_iter()
+                .map(|item| self.visit_block_item(item))
+                .collect::<SemanticResult<_>>()?,
+        })
+    }
+
     fn visit_function_def(&mut self, func_def: ast::FunctionDef) -> Self::FunctionDefResult {
         let resolved_body = func_def
             .body
-            .map(|block| {
-                block
-                    .into_iter()
-                    .map(|item| self.visit_block_item(item))
-                    .collect()
-            })
+            .map(|block| self.visit_block(block))
             .transpose()?;
         Ok(ast::FunctionDef {
             name: func_def.name,
