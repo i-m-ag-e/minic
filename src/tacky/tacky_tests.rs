@@ -1,5 +1,5 @@
 use crate::{
-    ast::{ASTRefVisitor, ASTVisitor},
+    ast::{ASTVisitor, folder::ASTFolder},
     lexer::{Lexer, LexerResult},
     parser::Parser,
     resolver::Resolver,

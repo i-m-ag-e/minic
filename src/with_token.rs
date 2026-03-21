@@ -57,3 +57,17 @@ impl<T, E> WithToken<Result<T, E>> {
         self.item.map(|v| WithToken::new(v, self.token_id))
     }
 }
+
+impl<T> WithToken<Option<T>> {
+    pub fn map_inner<U, F: FnOnce(T) -> U>(self, f: F) -> WithToken<Option<U>> {
+        WithToken::new(self.item.map(f), self.token_id)
+    }
+
+    pub fn map_option_transpose_result<U, E, F: FnOnce(T) -> Result<U, E>>(
+        self,
+        f: F,
+    ) -> Result<WithToken<Option<U>>, E> {
+        self.map_inner(f)
+            .map_transpose_result(|opt| opt.transpose())
+    }
+}

@@ -60,6 +60,9 @@ pub enum TokenType {
     SlashAssign,
 
     // keywords
+    KBreak,
+    KContinue,
+    KDo,
     KElse,
     KFor,
     KGoto,
@@ -83,7 +86,6 @@ pub struct Token {
     pub begin: SourcePosition,
     pub end: SourcePosition,
 }
-
 impl Token {
     pub fn span(&self) -> (SourcePosition, SourcePosition) {
         (self.begin, self.end)

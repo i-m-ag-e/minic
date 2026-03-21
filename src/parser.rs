@@ -3,8 +3,10 @@ pub mod parser_error;
 use crate::ast::expr::{
     AssignExpr, BinaryExpr, BinaryOp, ConditionalExpr, Expr, UnaryExpr, UnaryOp,
 };
-use crate::ast::stmt::{IfStmt, Label};
-use crate::ast::{Block, BlockItem, FunctionDef, VarDeclaration};
+use crate::ast::stmt::{
+    BreakStmt, ContinueStmt, DoWhileStmt, ForStmt, ForStmtInit, IfStmt, Label, LoopID, WhileStmt,
+};
+use crate::ast::{Block, BlockItem, FunctionDef, MultiVarDeclaration, VarDeclaration};
 use crate::ast::{Program, stmt::Stmt};
 use crate::lexer::token::{Literal, TokenID};
 use crate::source_file::SourcePosition;
@@ -19,8 +21,10 @@ use crate::{
 
 #[derive(Debug)]
 pub struct Parser<'a> {
+    current_loop: LoopID,
     tokens: &'a [Token],
     index: usize,
+    loop_depth: usize,
     symbol_table: &'a SymbolTable,
     used_tokens: &'a mut Vec<bool>,
     used_count: usize,
@@ -35,8 +39,10 @@ impl<'a> Parser<'a> {
         symbol_table: &'a SymbolTable,
     ) -> Self {
         Self {
+            current_loop: 0,
             tokens,
             index: 0,
+            loop_depth: 0,
             symbol_table,
             used_tokens,
             used_count: 0,
@@ -59,6 +65,11 @@ impl<'a> Parser<'a> {
         } else {
             None
         }
+    }
+
+    fn save_and_consume(&mut self, tok_type: TokenType) -> ParseResult<usize> {
+        self.consume(tok_type)?;
+        Ok(self.save_previous())
     }
 
     pub fn filter_saved_tokens(tokens: Vec<Token>, used_tokens: &'a mut Vec<bool>) -> Vec<Token> {
@@ -228,49 +239,67 @@ impl<'a> Parser<'a> {
 
     fn parse_block_item(&mut self) -> ParseResult<BlockItem> {
         match self.peek_token_type() {
-            Some(TokenType::KInt) => self.parse_declaration().map(BlockItem::Decl),
+            Some(TokenType::KInt) => self.parse_declaration(true).map(BlockItem::Decl),
             _ => self.parse_stmt().map(BlockItem::Stmt),
         }
     }
 
-    fn parse_declaration(&mut self) -> ParseResult<VarDeclaration> {
+    fn parse_declaration(&mut self, consume_semicolon: bool) -> ParseResult<MultiVarDeclaration> {
         self.consume(TokenType::KInt)?;
 
-        let name = self.consume_if(
-            |tt| matches!(tt, TokenType::Identifier(_)),
-            |error| ParserErrorType::ExpectedAnotherString {
-                expected: "<identifier>",
-                found: error.clone(),
-            },
-        )?;
-        let &TokenType::Identifier(name) = &name.token_type else {
-            unreachable!()
-        };
-        let name_token_id = self.save_previous();
+        let mut declarations = Vec::new();
+        loop {
+            let name = self.consume_if(
+                |tt| matches!(tt, TokenType::Identifier(_)),
+                |error| ParserErrorType::ExpectedAnotherString {
+                    expected: "<identifier>",
+                    found: error.clone(),
+                },
+            )?;
+            let &TokenType::Identifier(name) = &name.token_type else {
+                unreachable!()
+            };
+            let name_token_id = self.save_previous();
 
-        let initializer = if let Some(TokenType::Equal) = self.peek_token_type() {
-            let eq_token = self.save_and_advance().unwrap();
-            Some(WithToken::new(self.parse_expr()?, eq_token))
-        } else {
-            None
-        };
+            let initializer = if let Some(TokenType::Equal) = self.peek_token_type() {
+                let eq_token = self.save_and_advance().unwrap();
+                Some(WithToken::new(self.parse_expr()?, eq_token))
+            } else {
+                None
+            };
 
-        self.consume(TokenType::Semicolon)?;
+            declarations.push(VarDeclaration {
+                name: WithToken::new(name, name_token_id),
+                initializer,
+            });
 
-        Ok(VarDeclaration {
-            name: WithToken::new(name, name_token_id),
-            initializer,
-        })
+            if let Some(TokenType::Comma) = self.peek_token_type() {
+                self.consume(TokenType::Comma)?;
+            } else {
+                break;
+            }
+        }
+
+        if consume_semicolon {
+            self.consume(TokenType::Semicolon)?;
+        }
+
+        Ok(declarations)
     }
 }
 
 impl<'a> Parser<'a> {
     fn parse_stmt(&mut self) -> ParseResult<Stmt> {
         match self.peek_token_type() {
-            Some(TokenType::LeftBrace) => Ok(Stmt::Compound(self.parse_block()?)),
+            Some(TokenType::KBreak) => self.parse_break_stmt(),
+            Some(TokenType::KContinue) => self.parse_continue_stmt(),
+            Some(TokenType::KDo) => self.parse_do_while(),
+            Some(TokenType::KFor) => self.parse_for_stmt(),
             Some(TokenType::KGoto) => self.parse_goto_stmt(),
+            Some(TokenType::LeftBrace) => Ok(Stmt::Compound(self.parse_block()?)),
             Some(TokenType::KIf) => self.parse_if_stmt(),
             Some(TokenType::KReturn) => self.parse_return_stmt(),
+            Some(TokenType::KWhile) => self.parse_while_stmt(),
             Some(TokenType::Identifier(_))
                 if self.peek_next_token_type() == Some(TokenType::Colon) =>
             {
@@ -284,10 +313,114 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_break_stmt(&mut self) -> ParseResult<Stmt> {
+        let break_token = self.save_and_consume(TokenType::KBreak)?;
+        self.consume(TokenType::Semicolon)?;
+
+        if self.loop_depth == 0 || self.current_loop == 0 {
+            let token = self.tokens[break_token];
+            Err(ParserError {
+                err_type: ParserErrorType::BreakOutsideLoopOrSwitch,
+                span: token.span(),
+            })
+        } else {
+            Ok(Stmt::Break(BreakStmt {
+                loop_or_switch: true,
+                id: WithToken::new(self.current_loop - 1, break_token),
+            }))
+        }
+    }
+
+    fn parse_continue_stmt(&mut self) -> ParseResult<Stmt> {
+        let continue_token = self.save_and_consume(TokenType::KContinue)?;
+        self.consume(TokenType::Semicolon)?;
+
+        if self.loop_depth == 0 || self.current_loop == 0 {
+            let token = self.tokens[continue_token];
+            Err(ParserError {
+                err_type: ParserErrorType::ContinueOutsideLoop,
+                span: token.span(),
+            })
+        } else {
+            Ok(Stmt::Continue(ContinueStmt(WithToken::new(
+                self.current_loop - 1,
+                continue_token,
+            ))))
+        }
+    }
+
+    fn parse_do_while(&mut self) -> ParseResult<Stmt> {
+        let loop_id = self.current_loop;
+        self.current_loop += 1;
+
+        let do_token = self.save_and_consume(TokenType::KDo)?;
+        self.loop_depth += 1;
+        let body = Box::new(self.parse_stmt()?);
+        self.loop_depth -= 1;
+
+        let while_token = self.save_and_consume(TokenType::KWhile)?;
+
+        self.consume(TokenType::LeftParen)?;
+        let condition = self.parse_expr()?;
+        self.consume(TokenType::RightParen)?;
+        self.consume(TokenType::Semicolon)?;
+
+        Ok(Stmt::DoWhile(DoWhileStmt {
+            loop_id,
+            condition: WithToken::new(condition, while_token),
+            body: WithToken::new(body, do_token),
+        }))
+    }
+
     fn parse_expr_stmt(&mut self) -> ParseResult<Stmt> {
         let expr = self.parse_expr()?;
         self.consume(TokenType::Semicolon)?;
         Ok(Stmt::Expr(expr))
+    }
+
+    fn parse_for_stmt(&mut self) -> ParseResult<Stmt> {
+        let loop_id = self.current_loop;
+        self.current_loop += 1;
+
+        self.consume(TokenType::KFor)?;
+
+        let left_paren = self.save_and_consume(TokenType::LeftParen)?;
+        let initializer = match self.peek_token_type() {
+            Some(TokenType::Semicolon) => None,
+            Some(TokenType::KInt) => Some(ForStmtInit::Declaration(self.parse_declaration(false)?)),
+            _ => Some(ForStmtInit::Expression(self.parse_expr()?)),
+        };
+        let initializer = WithToken::new(initializer, left_paren);
+
+        let semicolon_1 = self.save_and_consume(TokenType::Semicolon)?;
+        let condition = if let Some(TokenType::Semicolon) = self.peek_token_type() {
+            None
+        } else {
+            Some(self.parse_expr()?)
+        };
+        let condition = WithToken::new(condition, semicolon_1);
+
+        let semicolon_2 = self.save_and_consume(TokenType::Semicolon)?;
+        let step = if let Some(TokenType::RightParen) = self.peek_token_type() {
+            None
+        } else {
+            Some(self.parse_expr()?)
+        };
+        let step = WithToken::new(step, semicolon_2);
+
+        self.consume(TokenType::RightParen)?;
+
+        self.loop_depth += 1;
+        let body = Box::new(self.parse_stmt()?);
+        self.loop_depth -= 1;
+
+        Ok(Stmt::For(ForStmt {
+            loop_id,
+            initializer,
+            condition,
+            step,
+            body,
+        }))
     }
 
     fn parse_goto_stmt(&mut self) -> ParseResult<Stmt> {
@@ -377,6 +510,28 @@ impl<'a> Parser<'a> {
             self.consume(TokenType::Semicolon)?;
             Ok(Stmt::Return(WithToken::new(Some(expr), ret_token)))
         }
+    }
+
+    fn parse_while_stmt(&mut self) -> ParseResult<Stmt> {
+        let loop_id = self.current_loop;
+        self.current_loop += 1;
+
+        self.consume(TokenType::KWhile)?;
+        let while_token = self.save_previous();
+
+        self.consume(TokenType::LeftParen)?;
+        let condition = self.parse_expr()?;
+        self.consume(TokenType::RightParen)?;
+
+        self.loop_depth += 1;
+        let body = self.parse_stmt()?;
+        self.loop_depth -= 1;
+
+        Ok(Stmt::While(WhileStmt {
+            loop_id,
+            condition: WithToken::new(condition, while_token),
+            body: Box::new(body),
+        }))
     }
 }
 

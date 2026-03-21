@@ -29,7 +29,7 @@ pub use parser::parser_error;
 
 use crate::{
     asm::tacky_to_asm,
-    ast::{ASTRefVisitor, ASTVisitor},
+    ast::{ASTVisitor, folder::ASTFolder},
     lexer::{LexerResult, token::TokenType},
     parser::Parser,
     resolver::Resolver,

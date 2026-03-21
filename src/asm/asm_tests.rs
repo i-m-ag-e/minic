@@ -1,6 +1,6 @@
 use crate::{
     asm::tacky_to_asm,
-    ast::{ASTRefVisitor, ASTVisitor},
+    ast::{ASTVisitor, folder::ASTFolder},
     lexer::{Lexer, LexerResult},
     parser::Parser,
     resolver::Resolver,

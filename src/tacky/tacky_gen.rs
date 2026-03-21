@@ -2,9 +2,9 @@ use std::mem;
 
 use crate::{
     ast::{
-        self, ASTRefVisitor,
-        expr::{self, BinaryOp, ExprRefVisitor, UnaryOp},
-        stmt::{Label, StmtRefVisitor},
+        self, ASTVisitor,
+        expr::{self, BinaryOp, ExprVisitor, UnaryOp},
+        stmt::{ForStmtInit, Label, LoopID, StmtVisitor},
     },
     lexer::token::{Literal, TokenID},
     resolver::var_map::ScopedVarMap,
@@ -42,6 +42,18 @@ impl<'a> TackyGen<'a> {
         format!("{}_{}.{}_{}", op, stage, line_col.0, line_col.1)
     }
 
+    fn make_break_continue_label(&self, op: &str, loop_id: LoopID) -> String {
+        format!("{}_loop.{}", op, loop_id)
+    }
+
+    fn make_loop_label(&self, loop_type: &str, loop_id: LoopID, token_id: TokenID) -> String {
+        let line_col = self.source_file.line_col_token_begin(token_id);
+        format!(
+            "{}.loop.{}_{}.{}",
+            loop_type, loop_id, line_col.0, line_col.1
+        )
+    }
+
     fn emit_raw(&mut self, instruction: InstructionKind, token_id: TokenID, message: Option<&str>) {
         let debug_info = instruction.debug_info();
         let token_line_col = self.source_file.line_col_token_begin(token_id);
@@ -63,9 +75,9 @@ impl<'a> TackyGen<'a> {
 
     fn emit_with_message(
         &mut self,
+        message: &str,
         instruction: InstructionKind,
         token_id: TokenID,
-        message: &str,
     ) {
         self.emit_raw(instruction, token_id, Some(message));
     }
@@ -77,7 +89,7 @@ impl<'a> TackyGen<'a> {
     ) {
         for (instruction, message) in instructions {
             if !message.is_empty() {
-                self.emit_with_message(instruction, token_id, message);
+                self.emit_with_message(message, instruction, token_id);
             } else {
                 self.emit(instruction, token_id);
             }
@@ -85,7 +97,7 @@ impl<'a> TackyGen<'a> {
     }
 }
 
-impl<'a> ExprRefVisitor<Value> for TackyGen<'a> {
+impl<'a> ExprVisitor<Value> for TackyGen<'a> {
     fn visit_assignment_expr(&mut self, expr: &expr::AssignExpr) -> Value {
         let dest = self.visit_expr(&expr.target);
         let src = self.visit_expr(&expr.right);
@@ -109,9 +121,9 @@ impl<'a> ExprRefVisitor<Value> for TackyGen<'a> {
             let end_label = self.make_logic_label("and", "end", expr.operator.token_id);
 
             self.emit_with_message(
+                "(&&: lhs)",
                 InstructionKind::JumpIfZero(left_val, short_circuit_label.clone()),
                 token_id,
-                "(&&: lhs)",
             );
             let right_val = self.visit_expr(&expr.right);
             let dest_var = self.make_var();
@@ -149,9 +161,9 @@ impl<'a> ExprRefVisitor<Value> for TackyGen<'a> {
             let end_label = self.make_logic_label("or", "end", expr.operator.token_id);
 
             self.emit_with_message(
+                "(||: lhs)",
                 InstructionKind::JumpIfNotZero(left_val, short_circuit_label.clone()),
                 token_id,
-                "(||: lhs)",
             );
             let right_val = self.visit_expr(&expr.right);
             let dest_var = self.make_var();
@@ -210,35 +222,35 @@ impl<'a> ExprRefVisitor<Value> for TackyGen<'a> {
         let end_label = self.make_logic_label("conditional", "end", expr.else_expr.token_id);
 
         self.emit_with_message(
+            "(?:) condition",
             InstructionKind::JumpIfZero(cond_val.clone(), else_label.clone()),
             expr.then_expr.token_id,
-            "(?:) condition",
         );
 
         let then_val = self.visit_expr(&expr.then_expr);
         self.emit_with_message(
+            "(?:) copy result of <then> into result of (?:)",
             InstructionKind::Copy {
                 dest: dest_var.clone(),
                 src: then_val,
             },
             expr.then_expr.token_id,
-            "(?:) copy result of <then> into result of (?:)",
         );
         self.emit_with_message(
+            "(?:) jump to end after <then>",
             InstructionKind::Jump(end_label.clone()),
             expr.then_expr.token_id,
-            "(?:) jump to end after <then>",
         );
 
         self.emit(InstructionKind::Label(else_label), expr.else_expr.token_id);
         let else_val = self.visit_expr(&expr.else_expr);
         self.emit_with_message(
+            "(?:) copy result of <else> into result of (?:)",
             InstructionKind::Copy {
                 dest: dest_var.clone(),
                 src: else_val,
             },
             expr.else_expr.token_id,
-            "(?:) copy result of <else> into result of (?:)",
         );
         self.emit(InstructionKind::Label(end_label), expr.else_expr.token_id);
         dest_var
@@ -327,13 +339,108 @@ impl<'a> ExprRefVisitor<Value> for TackyGen<'a> {
     }
 }
 
-impl<'a> StmtRefVisitor<()> for TackyGen<'a> {
+impl<'a> StmtVisitor<()> for TackyGen<'a> {
+    fn visit_break(&mut self, stmt: &ast::stmt::BreakStmt) -> () {
+        self.emit_with_message(
+            &format!("break out of loop with id {}", stmt.id.item),
+            InstructionKind::Jump(self.make_break_continue_label("break", stmt.id.item)),
+            stmt.id.token_id,
+        );
+    }
+
     fn visit_compound(&mut self, block: &ast::Block) -> () {
         self.visit_block(block)
     }
 
+    fn visit_continue(&mut self, stmt: &ast::stmt::ContinueStmt) -> () {
+        self.emit_with_message(
+            &format!("continue loop with id {}", stmt.0.item),
+            InstructionKind::Jump(self.make_break_continue_label("continue", stmt.0.item)),
+            stmt.0.token_id,
+        );
+    }
+
+    fn visit_do_while_stmt(&mut self, stmt: &ast::stmt::DoWhileStmt) -> () {
+        let loop_label = self.make_loop_label("do_while", stmt.loop_id, stmt.body.token_id);
+        let break_label = self.make_break_continue_label("break", stmt.loop_id);
+        let continue_label = self.make_break_continue_label("continue", stmt.loop_id);
+
+        self.emit_with_message(
+            &format!("loop id {}", stmt.loop_id),
+            InstructionKind::Label(loop_label.clone()),
+            stmt.body.token_id,
+        );
+        self.visit_stmt(&stmt.body);
+        self.emit(InstructionKind::Label(continue_label), stmt.body.token_id);
+        let condition_result = self.visit_expr(&stmt.condition);
+
+        self.emit_with_message(
+            &format!(
+                "if {}, jump back to beginning of loop with id {}",
+                condition_result, stmt.loop_id
+            ),
+            InstructionKind::JumpIfNotZero(condition_result, loop_label),
+            stmt.condition.token_id,
+        );
+        self.emit(InstructionKind::Label(break_label), stmt.condition.token_id);
+    }
+
     fn visit_expr_stmt(&mut self, stmt: &expr::Expr) -> () {
         self.visit_expr(stmt);
+    }
+
+    fn visit_for_stmt(&mut self, stmt: &ast::stmt::ForStmt) -> () {
+        let loop_label = self.make_loop_label("for", stmt.loop_id, stmt.initializer.token_id);
+        let break_label = self.make_break_continue_label("break", stmt.loop_id);
+        let continue_label = self.make_break_continue_label("continue", stmt.loop_id);
+
+        match &*stmt.initializer {
+            Some(ForStmtInit::Declaration(decls)) => {
+                decls.iter().for_each(|decl| self.visit_var_decl(decl));
+            }
+            Some(ForStmtInit::Expression(expr)) => {
+                self.visit_expr(expr);
+            }
+            None => {}
+        };
+
+        self.emit_with_message(
+            &format!("loop id {}", stmt.loop_id),
+            InstructionKind::Label(loop_label.clone()),
+            stmt.initializer.token_id,
+        );
+
+        let condition_result = stmt
+            .condition
+            .item
+            .as_ref()
+            .map(|cond| self.visit_expr(cond))
+            .unwrap_or(Value::Constant(1));
+        self.emit_with_message(
+            &format!("if !{}, jump to end of loop", condition_result),
+            InstructionKind::JumpIfZero(condition_result, break_label.clone()),
+            stmt.condition.token_id,
+        );
+
+        self.visit_stmt(&stmt.body);
+
+        self.emit(
+            InstructionKind::Label(continue_label),
+            stmt.initializer.token_id,
+        );
+        if let Some(step) = &stmt.step.item {
+            self.visit_expr(step);
+        }
+
+        self.emit_with_message(
+            &format!("jump to start of loop with id {}", stmt.loop_id),
+            InstructionKind::Jump(loop_label),
+            stmt.initializer.token_id,
+        );
+        self.emit(
+            InstructionKind::Label(break_label),
+            stmt.initializer.token_id,
+        );
     }
 
     fn visit_goto_stmt(&mut self, stmt: &WithToken<String>) -> () {
@@ -352,16 +459,16 @@ impl<'a> StmtRefVisitor<()> for TackyGen<'a> {
         let end_label = self.make_logic_label("if", "end", stmt.condition.token_id);
 
         self.emit_with_message(
-            InstructionKind::JumpIfZero(cond_val.clone(), else_label.clone()),
-            stmt.condition.token_id,
             &format!("(if) jump to else if {} is false", cond_val),
+            InstructionKind::JumpIfZero(cond_val, else_label.clone()),
+            stmt.condition.token_id,
         );
 
         self.visit_stmt(&stmt.then_stmt);
         self.emit_with_message(
+            "(if) jump to end after then",
             InstructionKind::Jump(end_label.clone()),
             stmt.condition.token_id,
-            "(if) jump to end after then",
         );
 
         self.emit(InstructionKind::Label(else_label), stmt.condition.token_id);
@@ -391,9 +498,40 @@ impl<'a> StmtRefVisitor<()> for TackyGen<'a> {
             unimplemented!()
         }
     }
+
+    fn visit_while_stmt(&mut self, stmt: &ast::stmt::WhileStmt) -> () {
+        let loop_label = self.make_loop_label("while", stmt.loop_id, stmt.condition.token_id);
+        let break_label = self.make_break_continue_label("break", stmt.loop_id);
+        let continue_label = self.make_break_continue_label("continue", stmt.loop_id);
+
+        self.emit_with_message(
+            &format!("loop id {}", stmt.loop_id),
+            InstructionKind::Label(loop_label.clone()),
+            stmt.condition.token_id,
+        );
+        self.emit(
+            InstructionKind::Label(continue_label),
+            stmt.condition.token_id,
+        );
+
+        let condition_result = self.visit_expr(&stmt.condition);
+        self.emit_with_message(
+            &format!("if !{}, jump to end of loop", condition_result),
+            InstructionKind::JumpIfZero(condition_result, break_label.clone()),
+            stmt.condition.token_id,
+        );
+        self.visit_stmt(&stmt.body);
+
+        self.emit_with_message(
+            &format!("jump back to start of loop with id {}", stmt.loop_id),
+            InstructionKind::Jump(loop_label),
+            stmt.condition.token_id,
+        );
+        self.emit(InstructionKind::Label(break_label), stmt.condition.token_id);
+    }
 }
 
-impl<'a> ASTRefVisitor for TackyGen<'a> {
+impl<'a> ASTVisitor for TackyGen<'a> {
     type ProgramResult = tacky::Program;
     type FunctionDefResult = tacky::FunctionDef;
     type StmtResult = ();
@@ -443,7 +581,9 @@ impl<'a> ASTRefVisitor for TackyGen<'a> {
 
     fn visit_block_item(&mut self, item: &ast::BlockItem) -> Self::BlockItemResult {
         match &item {
-            ast::BlockItem::Decl(var_decl) => self.visit_var_decl(var_decl),
+            ast::BlockItem::Decl(var_decls) => var_decls
+                .iter()
+                .for_each(|var_decl| self.visit_var_decl(var_decl)),
             ast::BlockItem::Stmt(stmt) => self.visit_stmt(stmt),
         }
     }
@@ -460,9 +600,9 @@ impl<'a> ASTRefVisitor for TackyGen<'a> {
             let src = self.visit_expr(&*initializer);
             let dst = self.visit_variable(&var_decl.name);
             self.emit_with_message(
+                "(var_decl with initializer)",
                 InstructionKind::Copy { dest: dst, src },
                 var_decl.name.token_id,
-                "(var_decl with initializer)",
             );
         }
     }

@@ -1,7 +1,8 @@
 use super::*;
 
-use crate::ast::{ASTRefVisitor, expr};
-use crate::ast::{expr::ExprRefVisitor, stmt::StmtRefVisitor};
+use crate::ast::stmt::ForStmtInit;
+use crate::ast::{ASTVisitor, expr};
+use crate::ast::{expr::ExprVisitor, stmt::StmtVisitor};
 use crate::lexer::{Lexer, LexerResult};
 use crate::parser;
 use crate::source_file::SourceFile;
@@ -39,7 +40,7 @@ impl<'a> JsonVisitor<'a> {
     }
 }
 
-impl<'a> ExprRefVisitor<Value> for JsonVisitor<'a> {
+impl<'a> ExprVisitor<Value> for JsonVisitor<'a> {
     fn visit_assignment_expr(&mut self, expr: &expr::AssignExpr) -> Value {
         json!({
             "type": "AssignmentExpr",
@@ -94,7 +95,23 @@ impl<'a> ExprRefVisitor<Value> for JsonVisitor<'a> {
     }
 }
 
-impl<'a> StmtRefVisitor<Value> for JsonVisitor<'a> {
+impl<'a> StmtVisitor<Value> for JsonVisitor<'a> {
+    fn visit_break(&mut self, stmt: &crate::ast::stmt::BreakStmt) -> Value {
+        json!({
+            "type": "Break",
+            "id": stmt.id.item,
+            "token": self.visit_token_short(stmt.id.get_token(&self.tokens))
+        })
+    }
+
+    fn visit_continue(&mut self, stmt: &crate::ast::stmt::ContinueStmt) -> Value {
+        json!({
+            "type": "Break",
+            "id": stmt.0.item,
+            "token": self.visit_token_short(stmt.0.get_token(&self.tokens))
+        })
+    }
+
     fn visit_compound(&mut self, block: &crate::ast::Block) -> Value {
         json!({
             "type": "Compound",
@@ -103,10 +120,36 @@ impl<'a> StmtRefVisitor<Value> for JsonVisitor<'a> {
         })
     }
 
+    fn visit_do_while_stmt(&mut self, stmt: &crate::ast::stmt::DoWhileStmt) -> Value {
+        json!({
+            "type": "DoWhile",
+            "id": stmt.loop_id,
+            "condition": self.visit_expr(&*stmt.condition),
+            "body": self.visit_stmt(&*stmt.body)
+        })
+    }
+
     fn visit_expr_stmt(&mut self, stmt: &Expr) -> Value {
         json!({
             "type": "ExprStmt",
             "expr": self.visit_expr(stmt),
+        })
+    }
+
+    fn visit_for_stmt(&mut self, stmt: &crate::ast::stmt::ForStmt) -> Value {
+        json!({
+            "type": "For",
+            "id": stmt.loop_id,
+            "initializer": stmt.initializer.as_ref().map(|init| match init {
+                ForStmtInit::Expression(expr) => self.visit_expr(expr),
+                ForStmtInit::Declaration(decl) => json!({
+                    "type": "ForDecl",
+                    "decls": decl.iter().map(|d| self.visit_var_decl(d)).collect::<Vec<_>>()
+                })
+            }),
+            "condition": stmt.condition.as_ref().map(|cond| self.visit_expr(cond)),
+            "step": stmt.step.as_ref().map(|step| self.visit_expr(step)),
+            // Note: The body of the for loop is not included here, as it's typically a Stmt, not part of the ForStmt struct.
         })
     }
 
@@ -147,9 +190,18 @@ impl<'a> StmtRefVisitor<Value> for JsonVisitor<'a> {
             "expr": stmt.as_ref().map(|e| self.visit_expr(e)),
         })
     }
+
+    fn visit_while_stmt(&mut self, stmt: &crate::ast::stmt::WhileStmt) -> Value {
+        json!({
+            "type": "While",
+            "id": stmt.loop_id,
+            "condition": self.visit_expr(&*stmt.condition),
+            "body": self.visit_stmt(&*stmt.body)
+        })
+    }
 }
 
-impl<'a> ASTRefVisitor for JsonVisitor<'a> {
+impl<'a> ASTVisitor for JsonVisitor<'a> {
     type ProgramResult = Value;
     type FunctionDefResult = Value;
     type StmtResult = Value;
@@ -176,7 +228,10 @@ impl<'a> ASTRefVisitor for JsonVisitor<'a> {
     fn visit_block_item(&mut self, item: &BlockItem) -> Self::BlockItemResult {
         match item {
             BlockItem::Stmt(stmt) => self.visit_stmt(stmt),
-            BlockItem::Decl(decl) => self.visit_var_decl(decl),
+            BlockItem::Decl(decl) => decl
+                .iter()
+                .map(|d| self.visit_var_decl(d))
+                .collect::<Value>(),
         }
     }
 
