@@ -4,7 +4,8 @@ use crate::ast::expr::{
     AssignExpr, BinaryExpr, BinaryOp, ConditionalExpr, Expr, UnaryExpr, UnaryOp,
 };
 use crate::ast::stmt::{
-    BreakStmt, ContinueStmt, DoWhileStmt, ForStmt, ForStmtInit, IfStmt, Label, LoopID, WhileStmt,
+    BreakStmt, BreakTarget, CaseStmt, ContinueStmt, DefaultStmt, DoWhileStmt, ForStmt, ForStmtInit,
+    IfStmt, Label, LoopID, SwitchStmt, WhileStmt,
 };
 use crate::ast::{Block, BlockItem, FunctionDef, MultiVarDeclaration, VarDeclaration};
 use crate::ast::{Program, stmt::Stmt};
@@ -21,10 +22,10 @@ use crate::{
 
 #[derive(Debug)]
 pub struct Parser<'a> {
-    current_loop: LoopID,
     tokens: &'a [Token],
+    breakable_stack: Vec<BreakTarget>,
     index: usize,
-    loop_depth: usize,
+    next_control_id: LoopID,
     symbol_table: &'a SymbolTable,
     used_tokens: &'a mut Vec<bool>,
     used_count: usize,
@@ -39,10 +40,10 @@ impl<'a> Parser<'a> {
         symbol_table: &'a SymbolTable,
     ) -> Self {
         Self {
-            current_loop: 0,
             tokens,
+            breakable_stack: Vec::new(),
             index: 0,
-            loop_depth: 0,
+            next_control_id: 0,
             symbol_table,
             used_tokens,
             used_count: 0,
@@ -176,6 +177,19 @@ impl<'a> Parser<'a> {
             ),
         }
     }
+
+    fn open_loop<F: Fn(LoopID) -> BreakTarget>(&mut self, f: F) -> LoopID {
+        let id = self.next_control_id;
+        self.next_control_id += 1;
+        self.breakable_stack.push(f(id));
+        id
+    }
+
+    fn end_loop(&mut self) {
+        self.breakable_stack
+            .pop()
+            .expect("breakable_stack should not be empty while popping");
+    }
 }
 
 impl<'a> Parser<'a> {
@@ -292,13 +306,16 @@ impl<'a> Parser<'a> {
     fn parse_stmt(&mut self) -> ParseResult<Stmt> {
         match self.peek_token_type() {
             Some(TokenType::KBreak) => self.parse_break_stmt(),
+            Some(TokenType::KCase) => self.parse_case_stmt(),
             Some(TokenType::KContinue) => self.parse_continue_stmt(),
+            Some(TokenType::KDefault) => self.parse_default_stmt(),
             Some(TokenType::KDo) => self.parse_do_while(),
             Some(TokenType::KFor) => self.parse_for_stmt(),
             Some(TokenType::KGoto) => self.parse_goto_stmt(),
             Some(TokenType::LeftBrace) => Ok(Stmt::Compound(self.parse_block()?)),
             Some(TokenType::KIf) => self.parse_if_stmt(),
             Some(TokenType::KReturn) => self.parse_return_stmt(),
+            Some(TokenType::KSwitch) => self.parse_switch_stmt(),
             Some(TokenType::KWhile) => self.parse_while_stmt(),
             Some(TokenType::Identifier(_))
                 if self.peek_next_token_type() == Some(TokenType::Colon) =>
@@ -317,46 +334,74 @@ impl<'a> Parser<'a> {
         let break_token = self.save_and_consume(TokenType::KBreak)?;
         self.consume(TokenType::Semicolon)?;
 
-        if self.loop_depth == 0 || self.current_loop == 0 {
-            let token = self.tokens[break_token];
-            Err(ParserError {
-                err_type: ParserErrorType::BreakOutsideLoopOrSwitch,
-                span: token.span(),
-            })
-        } else {
-            Ok(Stmt::Break(BreakStmt {
-                loop_or_switch: true,
-                id: WithToken::new(self.current_loop - 1, break_token),
-            }))
+        match self.breakable_stack.last() {
+            Some(&breakable) => Ok(Stmt::Break(BreakStmt(WithToken::new(
+                breakable,
+                break_token,
+            )))),
+            None => {
+                let token = self.tokens[break_token];
+                Err(ParserError {
+                    err_type: ParserErrorType::BreakOutsideLoopOrSwitch,
+                    span: token.span(),
+                })
+            }
         }
+    }
+
+    fn parse_case_stmt(&mut self) -> ParseResult<Stmt> {
+        let case_token = self.save_and_consume(TokenType::KCase)?;
+        let value = self.parse_expr()?;
+        self.consume(TokenType::Colon)?;
+
+        let next_stmt = Box::new(self.parse_stmt()?);
+        Ok(Stmt::Case(CaseStmt {
+            value: WithToken::new(value, case_token),
+            next_stmt,
+        }))
     }
 
     fn parse_continue_stmt(&mut self) -> ParseResult<Stmt> {
         let continue_token = self.save_and_consume(TokenType::KContinue)?;
         self.consume(TokenType::Semicolon)?;
 
-        if self.loop_depth == 0 || self.current_loop == 0 {
-            let token = self.tokens[continue_token];
-            Err(ParserError {
-                err_type: ParserErrorType::ContinueOutsideLoop,
-                span: token.span(),
-            })
-        } else {
-            Ok(Stmt::Continue(ContinueStmt(WithToken::new(
-                self.current_loop - 1,
+        match self
+            .breakable_stack
+            .iter()
+            .rev()
+            .find(|b| matches!(b, BreakTarget::Loop(_)))
+        {
+            Some(&BreakTarget::Loop(id)) => Ok(Stmt::Continue(ContinueStmt(WithToken::new(
+                id,
                 continue_token,
-            ))))
+            )))),
+            Some(BreakTarget::Switch(_)) => unreachable!(),
+            None => {
+                let token = self.tokens[continue_token];
+                Err(ParserError {
+                    err_type: ParserErrorType::ContinueOutsideLoop,
+                    span: token.span(),
+                })
+            }
         }
     }
 
+    fn parse_default_stmt(&mut self) -> ParseResult<Stmt> {
+        let default_token = self.save_and_consume(TokenType::KDefault)?;
+        self.consume(TokenType::Colon)?;
+
+        let next_stmt = Box::new(self.parse_stmt()?);
+        Ok(Stmt::Default(DefaultStmt {
+            default_token: WithToken::new((), default_token),
+            next_stmt,
+        }))
+    }
+
     fn parse_do_while(&mut self) -> ParseResult<Stmt> {
-        let loop_id = self.current_loop;
-        self.current_loop += 1;
+        let loop_id = self.open_loop(BreakTarget::Loop);
 
         let do_token = self.save_and_consume(TokenType::KDo)?;
-        self.loop_depth += 1;
         let body = Box::new(self.parse_stmt()?);
-        self.loop_depth -= 1;
 
         let while_token = self.save_and_consume(TokenType::KWhile)?;
 
@@ -365,6 +410,7 @@ impl<'a> Parser<'a> {
         self.consume(TokenType::RightParen)?;
         self.consume(TokenType::Semicolon)?;
 
+        self.end_loop();
         Ok(Stmt::DoWhile(DoWhileStmt {
             loop_id,
             condition: WithToken::new(condition, while_token),
@@ -379,8 +425,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_for_stmt(&mut self) -> ParseResult<Stmt> {
-        let loop_id = self.current_loop;
-        self.current_loop += 1;
+        let loop_id = self.open_loop(BreakTarget::Loop);
 
         self.consume(TokenType::KFor)?;
 
@@ -410,10 +455,9 @@ impl<'a> Parser<'a> {
 
         self.consume(TokenType::RightParen)?;
 
-        self.loop_depth += 1;
         let body = Box::new(self.parse_stmt()?);
-        self.loop_depth -= 1;
 
+        self.end_loop();
         Ok(Stmt::For(ForStmt {
             loop_id,
             initializer,
@@ -512,9 +556,28 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_switch_stmt(&mut self) -> ParseResult<Stmt> {
+        let switch_id = self.open_loop(BreakTarget::Switch);
+
+        self.consume(TokenType::KSwitch)?;
+        let switch_token = self.save_previous();
+
+        self.consume(TokenType::LeftParen)?;
+        let condition = self.parse_expr()?;
+        self.consume(TokenType::RightParen)?;
+
+        let body = Box::new(self.parse_stmt()?);
+
+        self.end_loop();
+        Ok(Stmt::Switch(SwitchStmt {
+            switch_id,
+            condition: WithToken::new(condition, switch_token),
+            body,
+        }))
+    }
+
     fn parse_while_stmt(&mut self) -> ParseResult<Stmt> {
-        let loop_id = self.current_loop;
-        self.current_loop += 1;
+        let loop_id = self.open_loop(BreakTarget::Loop);
 
         self.consume(TokenType::KWhile)?;
         let while_token = self.save_previous();
@@ -523,10 +586,9 @@ impl<'a> Parser<'a> {
         let condition = self.parse_expr()?;
         self.consume(TokenType::RightParen)?;
 
-        self.loop_depth += 1;
         let body = self.parse_stmt()?;
-        self.loop_depth -= 1;
 
+        self.end_loop();
         Ok(Stmt::While(WhileStmt {
             loop_id,
             condition: WithToken::new(condition, while_token),

@@ -175,6 +175,20 @@ fn tacky_instr_to_asm(instr: &tacky::Instruction, body: &mut Vec<Instruction>) {
                 debug_info: debug_info.clone(),
             });
         }
+        tacky::InstructionKind::JumpIfEqual { lhs, rhs, label } => {
+            let lhs = tacky_value_to_operand(lhs);
+            let rhs = tacky_value_to_operand(rhs);
+            body.extend_from_slice(&[
+                Instruction {
+                    kind: InstructionKind::Cmp(lhs, rhs),
+                    debug_info: debug_info.clone(),
+                },
+                Instruction {
+                    kind: InstructionKind::JmpCC(Condition::E, label.clone()),
+                    debug_info: debug_info.clone(),
+                },
+            ]);
+        }
         tacky::InstructionKind::JumpIfNotZero(cond, label) => {
             let cond = tacky_value_to_operand(cond);
             body.extend_from_slice(&[

@@ -99,8 +99,17 @@ impl<'a> StmtVisitor<Value> for JsonVisitor<'a> {
     fn visit_break(&mut self, stmt: &crate::ast::stmt::BreakStmt) -> Value {
         json!({
             "type": "Break",
-            "id": stmt.id.item,
-            "token": self.visit_token_short(stmt.id.get_token(&self.tokens))
+            "target": stmt.0.item,
+            "token": self.visit_token_short(stmt.0.get_token(&self.tokens))
+        })
+    }
+
+    fn visit_case(&mut self, stmt: &crate::ast::stmt::CaseStmt) -> Value {
+        json!({
+            "type": "Case",
+            "token": self.visit_token_short(stmt.value.get_token(&self.tokens)),
+            "value": self.visit_expr(&stmt.value),
+            "body": self.visit_stmt(&stmt.next_stmt)
         })
     }
 
@@ -117,6 +126,14 @@ impl<'a> StmtVisitor<Value> for JsonVisitor<'a> {
             "type": "Compound",
             "block": self.visit_block(block),
             "token": self.visit_token_short(block.block_begin.get_token(&self.tokens))
+        })
+    }
+
+    fn visit_default(&mut self, stmt: &crate::ast::stmt::DefaultStmt) -> Value {
+        json!({
+            "type": "Default",
+            "token": self.visit_token_short(stmt.default_token.get_token(&self.tokens)),
+            "body": self.visit_stmt(&stmt.next_stmt)
         })
     }
 
@@ -149,7 +166,7 @@ impl<'a> StmtVisitor<Value> for JsonVisitor<'a> {
             }),
             "condition": stmt.condition.as_ref().map(|cond| self.visit_expr(cond)),
             "step": stmt.step.as_ref().map(|step| self.visit_expr(step)),
-            // Note: The body of the for loop is not included here, as it's typically a Stmt, not part of the ForStmt struct.
+            "body": self.visit_stmt(&stmt.body)
         })
     }
 
@@ -188,6 +205,16 @@ impl<'a> StmtVisitor<Value> for JsonVisitor<'a> {
         json!({
             "type": "ReturnStmt",
             "expr": stmt.as_ref().map(|e| self.visit_expr(e)),
+        })
+    }
+
+    fn visit_switch_stmt(&mut self, stmt: &crate::ast::stmt::SwitchStmt) -> Value {
+        json!({
+            "type": "SwitchStmt",
+            "id": stmt.switch_id,
+            "condition": self.visit_expr(&stmt.condition),
+            "token" : self.visit_token_short(stmt.condition.get_token(&self.tokens)),
+            "body": self.visit_stmt(&*stmt.body)
         })
     }
 

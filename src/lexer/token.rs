@@ -61,7 +61,9 @@ pub enum TokenType {
 
     // keywords
     KBreak,
+    KCase,
     KContinue,
+    KDefault,
     KDo,
     KElse,
     KFor,
@@ -69,6 +71,7 @@ pub enum TokenType {
     KIf,
     KInt,
     KReturn,
+    KSwitch,
     KVoid,
     KWhile,
 

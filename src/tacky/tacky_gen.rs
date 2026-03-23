@@ -4,10 +4,11 @@ use crate::{
     ast::{
         self, ASTVisitor,
         expr::{self, BinaryOp, ExprVisitor, UnaryOp},
-        stmt::{ForStmtInit, Label, LoopID, StmtVisitor},
+        stmt::{BreakTarget, ForStmtInit, Label, LoopID, StmtVisitor},
     },
     lexer::token::{Literal, TokenID},
     resolver::var_map::ScopedVarMap,
+    semantic_analyzer::SwitchMap,
     source_file::SourceFile,
     tacky::{self, Instruction, InstructionKind, Value},
     with_token::WithToken,
@@ -18,15 +19,23 @@ pub struct TackyGen<'a> {
     pub var_count: usize,
     pub current_body: Vec<Instruction>,
     source_file: &'a SourceFile,
+    switch_map: SwitchMap,
+    switch_stack: Vec<LoopID>,
     symbol_table: &'a ScopedVarMap,
 }
 
 impl<'a> TackyGen<'a> {
-    pub fn new(source_file: &'a SourceFile, symbol_table: &'a ScopedVarMap) -> Self {
+    pub fn new(
+        source_file: &'a SourceFile,
+        switch_map: SwitchMap,
+        symbol_table: &'a ScopedVarMap,
+    ) -> Self {
         Self {
             var_count: 0,
             current_body: Vec::new(),
             source_file,
+            switch_map,
+            switch_stack: Vec::new(),
             symbol_table,
         }
     }
@@ -37,12 +46,23 @@ impl<'a> TackyGen<'a> {
         Value::Var(format!("pv.{}", var_id))
     }
 
+    fn make_case_label(&self, token_id: TokenID, switch_id: LoopID, default: bool) -> String {
+        let line_col = self.source_file.line_col_token_begin(token_id);
+        format!(
+            "switch.{}_{}.{}_{}",
+            switch_id,
+            if default { "default" } else { "case" },
+            line_col.0,
+            line_col.1
+        )
+    }
+
     fn make_logic_label(&self, op: &str, stage: &str, token_id: TokenID) -> String {
         let line_col = self.source_file.line_col_token_begin(token_id);
         format!("{}_{}.{}_{}", op, stage, line_col.0, line_col.1)
     }
 
-    fn make_break_continue_label(&self, op: &str, loop_id: LoopID) -> String {
+    fn make_loop_control_label(&self, op: &str, loop_id: LoopID) -> String {
         format!("{}_loop.{}", op, loop_id)
     }
 
@@ -52,6 +72,10 @@ impl<'a> TackyGen<'a> {
             "{}.loop.{}_{}.{}",
             loop_type, loop_id, line_col.0, line_col.1
         )
+    }
+
+    fn make_switch_break_label(&self, switch_id: LoopID) -> String {
+        format!("break_switch.{}", switch_id)
     }
 
     fn emit_raw(&mut self, instruction: InstructionKind, token_id: TokenID, message: Option<&str>) {
@@ -341,11 +365,29 @@ impl<'a> ExprVisitor<Value> for TackyGen<'a> {
 
 impl<'a> StmtVisitor<()> for TackyGen<'a> {
     fn visit_break(&mut self, stmt: &ast::stmt::BreakStmt) -> () {
-        self.emit_with_message(
-            &format!("break out of loop with id {}", stmt.id.item),
-            InstructionKind::Jump(self.make_break_continue_label("break", stmt.id.item)),
-            stmt.id.token_id,
-        );
+        match stmt.0.item {
+            BreakTarget::Loop(id) => self.emit_with_message(
+                &format!("break out of loop with id {}", id),
+                InstructionKind::Jump(self.make_loop_control_label("break", id)),
+                stmt.0.token_id,
+            ),
+            BreakTarget::Switch(id) => self.emit_with_message(
+                &format!("break out of switch with id {}", id),
+                InstructionKind::Jump(self.make_switch_break_label(id)),
+                stmt.0.token_id,
+            ),
+        };
+    }
+
+    fn visit_case(&mut self, stmt: &ast::stmt::CaseStmt) -> () {
+        let switch_id = *self
+            .switch_stack
+            .last()
+            .expect("case outside a switch cannot exist at the TACKY gen stage");
+        let case_label = self.make_case_label(stmt.value.token_id, switch_id, false);
+        self.emit(InstructionKind::Label(case_label), stmt.value.token_id);
+
+        self.visit_stmt(&stmt.next_stmt);
     }
 
     fn visit_compound(&mut self, block: &ast::Block) -> () {
@@ -355,15 +397,29 @@ impl<'a> StmtVisitor<()> for TackyGen<'a> {
     fn visit_continue(&mut self, stmt: &ast::stmt::ContinueStmt) -> () {
         self.emit_with_message(
             &format!("continue loop with id {}", stmt.0.item),
-            InstructionKind::Jump(self.make_break_continue_label("continue", stmt.0.item)),
+            InstructionKind::Jump(self.make_loop_control_label("continue", stmt.0.item)),
             stmt.0.token_id,
         );
     }
 
+    fn visit_default(&mut self, stmt: &ast::stmt::DefaultStmt) -> () {
+        let switch_id = *self
+            .switch_stack
+            .last()
+            .expect("case outside a switch cannot exist at the TACKY gen stage");
+        let default_label = self.make_case_label(stmt.default_token.token_id, switch_id, true);
+        self.emit(
+            InstructionKind::Label(default_label),
+            stmt.default_token.token_id,
+        );
+
+        self.visit_stmt(&stmt.next_stmt);
+    }
+
     fn visit_do_while_stmt(&mut self, stmt: &ast::stmt::DoWhileStmt) -> () {
         let loop_label = self.make_loop_label("do_while", stmt.loop_id, stmt.body.token_id);
-        let break_label = self.make_break_continue_label("break", stmt.loop_id);
-        let continue_label = self.make_break_continue_label("continue", stmt.loop_id);
+        let break_label = self.make_loop_control_label("break", stmt.loop_id);
+        let continue_label = self.make_loop_control_label("continue", stmt.loop_id);
 
         self.emit_with_message(
             &format!("loop id {}", stmt.loop_id),
@@ -391,8 +447,8 @@ impl<'a> StmtVisitor<()> for TackyGen<'a> {
 
     fn visit_for_stmt(&mut self, stmt: &ast::stmt::ForStmt) -> () {
         let loop_label = self.make_loop_label("for", stmt.loop_id, stmt.initializer.token_id);
-        let break_label = self.make_break_continue_label("break", stmt.loop_id);
-        let continue_label = self.make_break_continue_label("continue", stmt.loop_id);
+        let break_label = self.make_loop_control_label("break", stmt.loop_id);
+        let continue_label = self.make_loop_control_label("continue", stmt.loop_id);
 
         match &*stmt.initializer {
             Some(ForStmtInit::Declaration(decls)) => {
@@ -499,10 +555,59 @@ impl<'a> StmtVisitor<()> for TackyGen<'a> {
         }
     }
 
+    fn visit_switch_stmt(&mut self, stmt: &ast::stmt::SwitchStmt) -> () {
+        let condition_result = self.visit_expr(&stmt.condition);
+        let break_label = self.make_switch_break_label(stmt.switch_id);
+        let Some(switch_data) = self.switch_map.remove(&stmt.switch_id) else {
+            unreachable!()
+        };
+
+        for &case in &switch_data.cases {
+            let Literal::Integer(int) = case.item else {
+                unimplemented!()
+            };
+            self.emit_with_message(
+                &format!(
+                    "case comparison `{}` == `{}` (switch id {})",
+                    condition_result, int, stmt.switch_id
+                ),
+                InstructionKind::JumpIfEqual {
+                    lhs: condition_result.clone(),
+                    rhs: Value::Constant(int),
+                    label: self.make_case_label(case.token_id, stmt.switch_id, false),
+                },
+                case.token_id,
+            );
+        }
+
+        if let Some(default) = switch_data.default {
+            let default_label = self.make_case_label(default.token_id, stmt.switch_id, true);
+            self.emit_with_message(
+                &format!("jmp to default case (switch id {})", stmt.switch_id),
+                InstructionKind::Jump(default_label),
+                stmt.condition.token_id,
+            );
+        } else {
+            self.emit_with_message(
+                &format!("no match with cases, jump to end of switch"),
+                InstructionKind::Jump(break_label.clone()),
+                stmt.condition.token_id,
+            );
+        }
+
+        self.switch_stack.push(stmt.switch_id);
+        self.visit_stmt(&stmt.body);
+        self.switch_stack
+            .pop()
+            .expect("switch stack cannot be empty while popping");
+
+        self.emit(InstructionKind::Label(break_label), stmt.condition.token_id);
+    }
+
     fn visit_while_stmt(&mut self, stmt: &ast::stmt::WhileStmt) -> () {
         let loop_label = self.make_loop_label("while", stmt.loop_id, stmt.condition.token_id);
-        let break_label = self.make_break_continue_label("break", stmt.loop_id);
-        let continue_label = self.make_break_continue_label("continue", stmt.loop_id);
+        let break_label = self.make_loop_control_label("break", stmt.loop_id);
+        let continue_label = self.make_loop_control_label("continue", stmt.loop_id);
 
         self.emit_with_message(
             &format!("loop id {}", stmt.loop_id),

@@ -189,7 +189,7 @@ pub fn assemble(
         return Ok(String::new());
     };
 
-    let prog = if !stop_at_resolve {
+    let (prog, switch_map) = if !stop_at_resolve {
         let mut analyzer = SemanticAnalyzer::new(source_file, labels);
         let prog = analyzer.visit_program(prog)?;
         if debug {
@@ -199,13 +199,14 @@ pub fn assemble(
             );
             pretty_printer.visit_program(&prog);
         }
-        prog
+        (prog, analyzer.release_switch_map())
     } else {
         return Ok(String::new());
     };
 
     let tacky_prog = if !stop_at_analyze {
-        let mut tacky_gen = tacky::tacky_gen::TackyGen::new(source_file, &new_symbol_table);
+        let mut tacky_gen =
+            tacky::tacky_gen::TackyGen::new(source_file, switch_map, &new_symbol_table);
         let tacky_prog = tacky_gen.visit_program(&prog);
         if debug {
             println!("{:#?}", tacky_prog);

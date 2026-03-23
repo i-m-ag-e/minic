@@ -85,12 +85,28 @@ impl<'a, Table> StmtVisitor<()> for PrettyPrinter<'a, Table> {
         println!("{}BREAK", INDENT.repeat(self.indent_level))
     }
 
+    fn visit_case(&mut self, stmt: &crate::ast::stmt::CaseStmt) -> () {
+        print!("{}CASE ", INDENT.repeat(self.indent_level));
+        self.visit_expr(&stmt.value);
+        println!();
+        self.indent_level += 1;
+        self.visit_stmt(&stmt.next_stmt);
+        self.indent_level -= 1;
+    }
+
     fn visit_compound(&mut self, block: &crate::ast::Block) -> () {
         self.visit_block(block)
     }
 
     fn visit_continue(&mut self, _stmt: &crate::ast::stmt::ContinueStmt) -> () {
         println!("{}CONTINUE", INDENT.repeat(self.indent_level))
+    }
+
+    fn visit_default(&mut self, stmt: &crate::ast::stmt::DefaultStmt) -> () {
+        println!("{}DEFAULT", INDENT.repeat(self.indent_level));
+        self.indent_level += 1;
+        self.visit_stmt(&stmt.next_stmt);
+        self.indent_level -= 1;
     }
 
     fn visit_do_while_stmt(&mut self, stmt: &crate::ast::stmt::DoWhileStmt) -> () {
@@ -169,6 +185,15 @@ impl<'a, Table> StmtVisitor<()> for PrettyPrinter<'a, Table> {
             self.visit_expr(expr);
         }
         println!();
+    }
+
+    fn visit_switch_stmt(&mut self, stmt: &crate::ast::stmt::SwitchStmt) -> () {
+        print!("{}SWITCH ", INDENT.repeat(self.indent_level));
+        self.visit_expr(&stmt.condition.item);
+        println!();
+        self.indent_level += 1;
+        self.visit_stmt(&stmt.body);
+        self.indent_level -= 1;
     }
 
     fn visit_while_stmt(&mut self, stmt: &crate::ast::stmt::WhileStmt) -> () {

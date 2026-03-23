@@ -4,12 +4,7 @@ pub mod var_map;
 use std::collections::HashMap;
 
 use crate::{
-    ast::{
-        self, FunctionDef, VarDeclaration,
-        expr::{AssignExpr, Expr},
-        folder::ASTFolder,
-        stmt::{self, Stmt},
-    },
+    ast::{self, FunctionDef, VarDeclaration, expr::Expr, folder::ASTFolder, stmt::Stmt},
     resolver::{
         resolver_error::{ResolverError, ResolverErrorType, ResolverWarning, ResolverWarningType},
         var_map::ScopedVarMap,
@@ -91,22 +86,12 @@ impl<'a> ASTFolder<ResolverError> for Resolver<'a> {
         &mut self,
         expr: ast::expr::AssignExpr,
     ) -> Result<Expr, ResolverError> {
-        let AssignExpr {
-            target: left,
-            eq_token,
-            right,
-        } = expr;
-
-        if let Expr::Variable(_) = *left {
-            let left = self.visit_expr(*left)?;
-            let right = self.visit_expr(*right)?;
-            Ok(Expr::Assignment(AssignExpr {
-                target: Box::new(left),
-                eq_token,
-                right: Box::new(right),
-            }))
+        if let Expr::Variable(_) = *expr.target {
+            self.fold_assignment_expr(expr)
         } else {
-            let token = eq_token.get_token(&self.source_file.get_tokens_checked());
+            let token = expr
+                .eq_token
+                .get_token(&self.source_file.get_tokens_checked());
             Err(ResolverError {
                 err_type: ResolverErrorType::InvalidLValue,
                 span: (token.begin, token.end),
@@ -150,38 +135,10 @@ impl<'a> ASTFolder<ResolverError> for Resolver<'a> {
 
     fn visit_for_stmt(&mut self, stmt: ast::stmt::ForStmt) -> Result<Stmt, ResolverError> {
         self.begin_scope();
-
-        let initializer = stmt
-            .initializer
-            .map_option_transpose_result(|init| match init {
-                stmt::ForStmtInit::Declaration(decls) => decls
-                    .into_iter()
-                    .map(|decl| self.visit_var_decl(decl))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map(stmt::ForStmtInit::Declaration),
-                stmt::ForStmtInit::Expression(expr) => {
-                    Ok(stmt::ForStmtInit::Expression(self.visit_expr(expr)?))
-                }
-            })?;
-
-        let condition = stmt
-            .condition
-            .map_option_transpose_result(|cond| self.visit_expr(cond))?;
-
-        let step = stmt
-            .step
-            .map_option_transpose_result(|cond| self.visit_expr(cond))?;
-
-        let body = Box::new(self.visit_stmt(*stmt.body)?);
+        let result = self.fold_for_stmt(stmt)?;
         self.end_scope();
 
-        Ok(Stmt::For(stmt::ForStmt {
-            loop_id: stmt.loop_id,
-            initializer,
-            condition,
-            step,
-            body,
-        }))
+        Ok(result)
     }
 
     fn visit_goto_stmt(&mut self, stmt: WithToken<String>) -> ResolverResult<Stmt> {
@@ -238,17 +195,10 @@ impl<'a> ASTFolder<ResolverError> for Resolver<'a> {
 
     fn visit_block(&mut self, block: ast::Block) -> Result<ast::Block, ResolverError> {
         self.begin_scope();
-        let body = block
-            .body
-            .into_iter()
-            .map(|item| self.visit_block_item(item))
-            .collect::<Result<Vec<_>, _>>()?;
+        let result = self.fold_block(block)?;
         self.end_scope();
 
-        Ok(ast::Block {
-            body,
-            block_begin: block.block_begin,
-        })
+        Ok(result)
     }
 
     fn visit_function_def(&mut self, func_def: FunctionDef) -> ResolverResult<FunctionDef> {
