@@ -4,6 +4,11 @@ use thiserror::Error;
 
 #[derive(Debug, Clone, Error)]
 pub enum ParserErrorType {
+    #[error("`break` statement outside of a loop or switch statement")]
+    BreakOutsideLoopOrSwitch,
+    #[error("`continue` statement outside of a loop")]
+    ContinueOutsideLoop,
+
     #[error("Unexpected end of input")]
     UnexpectedEndOfInput,
     #[error("Unexpected token: {0:?}")]

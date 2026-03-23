@@ -56,6 +56,11 @@ pub enum InstructionKind {
         src: Value,
     },
     Jump(String),
+    JumpIfEqual {
+        lhs: Value,
+        rhs: Value,
+        label: String,
+    },
     JumpIfZero(Value, String),
     JumpIfNotZero(Value, String),
     Label(String),
@@ -82,6 +87,9 @@ impl InstructionKind {
                 format!("(copy) `{}` = `{}`", dest, src)
             }
             InstructionKind::Jump(_label) => String::new(),
+            InstructionKind::JumpIfEqual { lhs, rhs, label: _ } => {
+                format!("jmp if `{}` == `{}`", lhs, rhs)
+            }
             InstructionKind::JumpIfNotZero(cond, _label) => format!("jmp if `{}` != 0", cond),
             InstructionKind::JumpIfZero(cond, _label) => format!("jmp if `{}` == 0", cond),
             InstructionKind::Label(_label) => String::new(),

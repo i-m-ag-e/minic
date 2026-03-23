@@ -1,17 +1,38 @@
 use crate::{
     ast::{
-        self, ASTVisitor,
-        expr::{self, ExprVisitor},
-        stmt::{self, StmtVisitor},
+        expr,
+        folder::ASTFolder,
+        stmt::{self, LoopID},
     },
-    source_file::SourceFile,
+    lexer::token::Literal,
+    source_file::{SourceFile, SourcePosition},
     with_token::WithToken,
 };
 use std::collections::HashMap;
 use thiserror::Error;
 
+#[derive(Debug, Default, Clone)]
+pub struct SwitchData {
+    pub cases: Vec<WithToken<Literal>>,
+    pub default: Option<WithToken<()>>,
+}
+
+pub type SwitchMap = HashMap<LoopID, SwitchData>;
+
 #[derive(Error, Debug)]
 pub enum SemanticError {
+    #[error("`case` used outside a switch statement")]
+    CaseOutsideLoop,
+    #[error("`default` used outside a switch statement")]
+    DefaultOutsideLoop,
+    #[error("duplicate case label (previous case with same value at {prev_line}:{prev_col}")]
+    DuplicateCaseLabel { prev_line: usize, prev_col: usize },
+    #[error(
+        "`default` used twice in the same switch statement; previous use at {prev_line}:{prev_col}"
+    )]
+    DuplicateDefault { prev_line: usize, prev_col: usize },
+    #[error("non-constant and non-literal values are not allowed in case statements")]
+    NonConstCase,
     #[error("Undefined label: {0}")]
     UndefinedLabel(String),
 }
@@ -20,13 +41,15 @@ pub enum SemanticError {
 #[error("Semantic error: {err}")]
 pub struct SemanticAnalyzerError {
     pub err: SemanticError,
-    pub span: (usize, usize),
+    pub span: (SourcePosition, SourcePosition),
 }
 
 #[derive(Debug)]
 pub struct SemanticAnalyzer<'a> {
     source_file: &'a SourceFile,
     labels: HashMap<String, WithToken<()>>,
+    switch_map: SwitchMap,
+    switch_stack: Vec<LoopID>,
 }
 
 pub type SemanticResult<T> = Result<T, SemanticAnalyzerError>;
@@ -36,52 +59,104 @@ impl<'a> SemanticAnalyzer<'a> {
         Self {
             source_file,
             labels,
+            switch_map: SwitchMap::new(),
+            switch_stack: Vec::new(),
         }
     }
-}
 
-impl<'a> ExprVisitor<SemanticResult<expr::Expr>> for SemanticAnalyzer<'a> {
-    fn visit_assignment_expr(&mut self, expr: expr::AssignExpr) -> SemanticResult<expr::Expr> {
-        Ok(expr::Expr::Assignment(expr))
-    }
-
-    fn visit_binary_expr(&mut self, expr: expr::BinaryExpr) -> SemanticResult<expr::Expr> {
-        Ok(expr::Expr::Binary(expr))
-    }
-
-    fn visit_conditional_expr(
-        &mut self,
-        expr: expr::ConditionalExpr,
-    ) -> SemanticResult<expr::Expr> {
-        Ok(expr::Expr::Conditional(expr))
-    }
-
-    fn visit_constant(
-        &mut self,
-        expr: crate::with_token::WithToken<crate::lexer::token::Literal>,
-    ) -> SemanticResult<expr::Expr> {
-        Ok(expr::Expr::Constant(expr))
-    }
-
-    fn visit_unary_expr(&mut self, expr: expr::UnaryExpr) -> SemanticResult<expr::Expr> {
-        Ok(expr::Expr::Unary(expr))
-    }
-
-    fn visit_variable(
-        &mut self,
-        var: crate::with_token::WithToken<crate::symbol::Symbol>,
-    ) -> SemanticResult<expr::Expr> {
-        Ok(expr::Expr::Variable(var))
+    pub fn release_switch_map(self) -> SwitchMap {
+        self.switch_map
     }
 }
 
-impl<'a> StmtVisitor<SemanticResult<stmt::Stmt>> for SemanticAnalyzer<'a> {
-    fn visit_compound(&mut self, block: ast::Block) -> SemanticResult<stmt::Stmt> {
-        Ok(stmt::Stmt::Compound(self.visit_block(block)?))
+impl<'a> ASTFolder<SemanticAnalyzerError> for SemanticAnalyzer<'a> {
+    fn visit_case_stmt(
+        &mut self,
+        stmt: stmt::CaseStmt,
+    ) -> Result<stmt::Stmt, SemanticAnalyzerError> {
+        if let Some(switch_data) = self
+            .switch_stack
+            .last()
+            .copied()
+            .and_then(|id| self.switch_map.get_mut(&id))
+        {
+            let with_token = stmt.value.with_value(());
+            let expr::Expr::Constant(WithToken {
+                item: Literal::Integer(lit),
+                ..
+            }) = *stmt.value
+            else {
+                let token = stmt.value.get_token(self.source_file.get_tokens_checked());
+                return Err(SemanticAnalyzerError {
+                    err: SemanticError::NonConstCase,
+                    span: token.span(),
+                });
+            };
+
+            if let Some(prev) = switch_data
+                .cases
+                .iter()
+                .find(|case| case.item == Literal::Integer(lit))
+            {
+                let token = prev.get_token(self.source_file.get_tokens_checked());
+                let (prev_line, prev_col) = self.source_file.line_col(token.begin.0);
+                return Err(SemanticAnalyzerError {
+                    err: SemanticError::DuplicateCaseLabel {
+                        prev_line,
+                        prev_col,
+                    },
+                    span: token.span(),
+                });
+            }
+
+            switch_data
+                .cases
+                .push(with_token.with_value(Literal::Integer(lit)));
+
+            self.fold_case_stmt(stmt)
+        } else {
+            let token = stmt.value.get_token(self.source_file.get_tokens_checked());
+            Err(SemanticAnalyzerError {
+                err: SemanticError::CaseOutsideLoop,
+                span: token.span(),
+            })
+        }
     }
 
-    fn visit_expr_stmt(&mut self, stmt: expr::Expr) -> SemanticResult<stmt::Stmt> {
-        Ok(stmt::Stmt::Expr(stmt))
+    fn visit_default_stmt(
+        &mut self,
+        stmt: stmt::DefaultStmt,
+    ) -> Result<stmt::Stmt, SemanticAnalyzerError> {
+        if let Some(switch_data) = self
+            .switch_stack
+            .last()
+            .copied()
+            .and_then(|id| self.switch_map.get_mut(&id))
+        {
+            if let Some(prev) = switch_data.default {
+                let token = prev.get_token(self.source_file.get_tokens_checked());
+                let (prev_line, prev_col) = self.source_file.line_col(token.begin.0);
+                return Err(SemanticAnalyzerError {
+                    err: SemanticError::DuplicateDefault {
+                        prev_line,
+                        prev_col,
+                    },
+                    span: token.span(),
+                });
+            }
+
+            switch_data.default = Some(stmt.default_token);
+
+            self.fold_default_stmt(stmt)
+        } else {
+            let token = stmt
+                .default_token
+                .get_token(self.source_file.get_tokens_checked());
+            Err(SemanticAnalyzerError {
+                err: SemanticError::DefaultOutsideLoop,
+                span: token.span(),
+            })
+        }
     }
 
     fn visit_goto_stmt(
@@ -95,83 +170,23 @@ impl<'a> StmtVisitor<SemanticResult<stmt::Stmt>> for SemanticAnalyzer<'a> {
             let token = stmt.get_token(self.source_file.get_tokens_checked());
             Err(SemanticAnalyzerError {
                 err: SemanticError::UndefinedLabel(label_name.to_string()),
-                span: (token.begin.0, token.end.0),
+                span: token.span(),
             })
         }
     }
 
-    fn visit_if_stmt(&mut self, stmt: stmt::IfStmt) -> SemanticResult<stmt::Stmt> {
-        Ok(stmt::Stmt::If(stmt))
-    }
-
-    fn visit_label_stmt(&mut self, stmt: stmt::Label) -> SemanticResult<stmt::Stmt> {
-        Ok(stmt::Stmt::Label(stmt))
-    }
-
-    fn visit_null_stmt(&mut self) -> SemanticResult<stmt::Stmt> {
-        Ok(stmt::Stmt::Null)
-    }
-
-    fn visit_return_stmt(
+    fn visit_switch_stmt(
         &mut self,
-        stmt: crate::with_token::WithToken<Option<expr::Expr>>,
-    ) -> SemanticResult<stmt::Stmt> {
-        Ok(stmt::Stmt::Return(stmt))
-    }
-}
+        stmt: stmt::SwitchStmt,
+    ) -> Result<stmt::Stmt, SemanticAnalyzerError> {
+        self.switch_stack.push(stmt.switch_id);
+        self.switch_map
+            .insert(stmt.switch_id, SwitchData::default());
+        let result = self.fold_switch_stmt(stmt)?;
+        self.switch_stack
+            .pop()
+            .expect("switch stack cannot be empty while popping");
 
-impl<'a> ASTVisitor for SemanticAnalyzer<'a> {
-    type BlockItemResult = SemanticResult<ast::BlockItem>;
-    type BlockResult = SemanticResult<ast::Block>;
-    type ExprResult = SemanticResult<expr::Expr>;
-    type StmtResult = SemanticResult<stmt::Stmt>;
-    type FunctionDefResult = SemanticResult<ast::FunctionDef>;
-    type ProgramResult = SemanticResult<ast::Program>;
-    type VarDeclResult = SemanticResult<ast::VarDeclaration>;
-
-    fn visit_block_item(&mut self, item: ast::BlockItem) -> Self::BlockItemResult {
-        match item {
-            ast::BlockItem::Stmt(stmt) => Ok(ast::BlockItem::Stmt(self.visit_stmt(stmt)?)),
-            ast::BlockItem::Decl(var_decl) => {
-                Ok(ast::BlockItem::Decl(self.visit_var_decl(var_decl)?))
-            }
-        }
-    }
-
-    fn visit_block(&mut self, block: ast::Block) -> Self::BlockResult {
-        Ok(ast::Block {
-            block_begin: block.block_begin,
-            body: block
-                .body
-                .into_iter()
-                .map(|item| self.visit_block_item(item))
-                .collect::<SemanticResult<_>>()?,
-        })
-    }
-
-    fn visit_function_def(&mut self, func_def: ast::FunctionDef) -> Self::FunctionDefResult {
-        let resolved_body = func_def
-            .body
-            .map(|block| self.visit_block(block))
-            .transpose()?;
-        Ok(ast::FunctionDef {
-            name: func_def.name,
-            body: resolved_body,
-        })
-    }
-
-    fn visit_program(&mut self, program: ast::Program) -> Self::ProgramResult {
-        let resolved_functions = program
-            .function_defs
-            .into_iter()
-            .map(|func| self.visit_function_def(func))
-            .collect::<SemanticResult<Vec<_>>>()?;
-        Ok(ast::Program {
-            function_defs: resolved_functions,
-        })
-    }
-
-    fn visit_var_decl(&mut self, var_decl: ast::VarDeclaration) -> Self::VarDeclResult {
-        Ok(var_decl)
+        Ok(result)
     }
 }

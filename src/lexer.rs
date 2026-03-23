@@ -46,13 +46,20 @@ macro_rules! multi_char_tok {
 
 lazy_static! {
     static ref KW_LIST: Vec<(&'static str, TokenType)> = vec![
+        ("break", TokenType::KBreak),
+        ("case", TokenType::KCase),
+        ("continue", TokenType::KContinue),
+        ("default", TokenType::KDefault),
+        ("do", TokenType::KDo),
         ("else", TokenType::KElse),
         ("false", TokenType::Literal(Literal::Bool(false))),
+        ("for", TokenType::KFor),
         ("goto", TokenType::KGoto),
         ("for", TokenType::KFor),
         ("if", TokenType::KIf),
         ("int", TokenType::KInt),
         ("return", TokenType::KReturn),
+        ("switch", TokenType::KSwitch),
         ("true", TokenType::Literal(Literal::Bool(true))),
         ("void", TokenType::KVoid),
         ("while", TokenType::KWhile),

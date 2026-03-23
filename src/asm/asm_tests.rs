@@ -1,9 +1,10 @@
 use crate::{
     asm::tacky_to_asm,
-    ast::{ASTRefVisitor, ASTVisitor},
+    ast::{ASTVisitor, folder::ASTFolder},
     lexer::{Lexer, LexerResult},
     parser::Parser,
     resolver::Resolver,
+    semantic_analyzer::SemanticAnalyzer,
     source_file::SourceFile,
     symbol::SymbolTable,
     tacky::tacky_gen::TackyGen,
@@ -24,8 +25,13 @@ fn compile_to_asm_string(s: &str) -> anyhow::Result<String> {
 
     let mut resolver = Resolver::new(symbol_table, &input);
     let prog = resolver.visit_program(ast_program)?;
+    let (var_map, labels) = resolver.release_symbol_table_and_labels();
 
-    let mut tacky_gen = TackyGen::new(&input, &resolver.symbol_table());
+    let mut analyzer = SemanticAnalyzer::new(&input, labels);
+    let prog = analyzer.visit_program(prog)?;
+    let switch_map = analyzer.release_switch_map();
+
+    let mut tacky_gen = TackyGen::new(&input, switch_map, &var_map);
     let tacky_prog = tacky_gen.visit_program(&prog);
 
     let asm_ast = tacky_to_asm(&tacky_prog);

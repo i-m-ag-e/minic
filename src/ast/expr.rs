@@ -249,26 +249,6 @@ pub struct UnaryExpr {
 }
 
 pub trait ExprVisitor<R> {
-    fn visit_assignment_expr(&mut self, expr: AssignExpr) -> R;
-    fn visit_binary_expr(&mut self, expr: BinaryExpr) -> R;
-    fn visit_conditional_expr(&mut self, expr: ConditionalExpr) -> R;
-    fn visit_constant(&mut self, expr: WithToken<Literal>) -> R;
-    fn visit_unary_expr(&mut self, expr: UnaryExpr) -> R;
-    fn visit_variable(&mut self, var: WithToken<Symbol>) -> R;
-
-    fn visit_expr(&mut self, expr: Expr) -> R {
-        match expr {
-            Expr::Assignment(assign) => self.visit_assignment_expr(assign),
-            Expr::Binary(binary_expr) => self.visit_binary_expr(binary_expr),
-            Expr::Conditional(conditional_expr) => self.visit_conditional_expr(conditional_expr),
-            Expr::Constant(lit) => self.visit_constant(lit),
-            Expr::Unary(unary_expr) => self.visit_unary_expr(unary_expr),
-            Expr::Variable(var) => self.visit_variable(var),
-        }
-    }
-}
-
-pub trait ExprRefVisitor<R> {
     fn visit_assignment_expr(&mut self, expr: &AssignExpr) -> R;
     fn visit_binary_expr(&mut self, expr: &BinaryExpr) -> R;
     fn visit_conditional_expr(&mut self, expr: &ConditionalExpr) -> R;
