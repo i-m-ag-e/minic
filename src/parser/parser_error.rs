@@ -9,6 +9,11 @@ pub enum ParserErrorType {
     #[error("`continue` statement outside of a loop")]
     ContinueOutsideLoop,
 
+    #[error(
+        "Nested function definitions are not allowed; function `{0}` is defined inside another function"
+    )]
+    NestedFunctionDefinition(String),
+
     #[error("Unexpected end of input")]
     UnexpectedEndOfInput,
     #[error("Unexpected token: {0:?}")]

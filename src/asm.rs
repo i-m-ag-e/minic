@@ -6,7 +6,7 @@ use crate::{
     ast::expr::{BinaryOp, UnaryOp},
     debug_info::DebugInfo,
 };
-pub use asm_gen::tacky_to_asm;
+pub use asm_gen::emit_asm_program;
 
 const INDENT: &str = "    ";
 
@@ -91,8 +91,13 @@ pub enum InstructionKind {
         src: Operand,
         dest: Operand,
     },
+    Call {
+        func_name: String,
+        is_external: bool,
+    },
     Cmp(Operand, Operand),
     Cqo,
+    DeallocateStack(usize),
     Idiv(Operand),
     Jmp(String),
     JmpCC(Condition, String),
@@ -102,6 +107,7 @@ pub enum InstructionKind {
         src: Operand,
         dest: Operand,
     },
+    Push(Operand),
     Ret,
     Unary(UnaryOp, Operand),
 }
@@ -165,9 +171,17 @@ impl InstructionKind {
             InstructionKind::Cmp(lhs, rhs) => vec![lhs, rhs],
             InstructionKind::Idiv(operand) => vec![operand],
             InstructionKind::Mov { src, dest } => vec![src, dest],
+            InstructionKind::Push(op) => vec![op],
             InstructionKind::SetCC(_, operand) => vec![operand],
             InstructionKind::Unary(_, operand) => vec![operand],
-            _ => vec![],
+            InstructionKind::AllocateStack(_)
+            | InstructionKind::Call { .. }
+            | InstructionKind::Cqo
+            | InstructionKind::DeallocateStack(_)
+            | InstructionKind::Jmp(_)
+            | InstructionKind::JmpCC(_, _)
+            | InstructionKind::Label(_)
+            | InstructionKind::Ret => vec![],
         }
     }
 }
@@ -191,10 +205,29 @@ impl Display for InstructionKind {
                     dest
                 )
             }
+            InstructionKind::Call {
+                func_name,
+                is_external,
+            } => {
+                write!(
+                    f,
+                    "{:<10}\t\t{}{}",
+                    "call",
+                    func_name,
+                    if *is_external { "@PLT" } else { "" }
+                )
+            }
             InstructionKind::Cmp(lhs, rhs) => {
                 write!(f, "{:<10}\t\t{}, {}", "cmpq", lhs, rhs)
             }
             InstructionKind::Cqo => write!(f, "{:<10}", "cqo"),
+            InstructionKind::DeallocateStack(n) => {
+                if *n > 0 {
+                    write!(f, "{:<10}\t\t${}, %rsp", "addq", n)
+                } else {
+                    write!(f, "")
+                }
+            }
             InstructionKind::Label(label) => write!(f, "{}:", label),
             InstructionKind::Jmp(label) => write!(f, "{:<10}\t\t{}", "jmp", label),
             InstructionKind::JmpCC(cond, label) => {
@@ -202,6 +235,7 @@ impl Display for InstructionKind {
             }
             InstructionKind::Idiv(operand) => write!(f, "{:<10}\t\t{}", "idivq", operand),
             InstructionKind::Mov { src, dest } => write!(f, "{:<10}\t\t{}, {}", "movq", src, dest),
+            InstructionKind::Push(op) => write!(f, "{:<10}\t\t{}", "pushq", op),
             InstructionKind::Ret => {
                 write!(f, "{:<10}\t\t%rbp, %rsp\n", "movq")?;
                 write!(f, "{}{:<10}\t\t%rbp\n", INDENT, "popq")?;
@@ -231,7 +265,7 @@ impl Display for Operand {
             Operand::Imm(value) => write!(f, "${}", value),
             Operand::Pseudo(var) => write!(f, "pseudo.{}", var),
             Operand::Register(reg) => reg.fmt(f),
-            Operand::Stack(n) => write!(f, "-{}(%rbp)", n),
+            Operand::Stack(n) => write!(f, "{}(%rbp)", n),
         }
     }
 }
@@ -266,12 +300,16 @@ pub enum Register {
     AX,
     CL,
     CX,
+    DI,
     DL,
     DX,
+    R8,
+    R9,
     R10B,
     R10,
     R11B,
     R11,
+    SI,
 }
 
 impl Display for Register {
@@ -281,12 +319,16 @@ impl Display for Register {
             Register::AX => "%rax",
             Register::CL => "%cl",
             Register::CX => "%rcx",
+            Register::DI => "%rdi",
             Register::DL => "%dl",
             Register::DX => "%rdx",
+            Register::R8 => "%r8",
+            Register::R9 => "%r9",
             Register::R10B => "%r10b",
             Register::R10 => "%r10",
             Register::R11B => "%r11b",
             Register::R11 => "%r11",
+            Register::SI => "%rsi",
         };
         write!(f, "{}", reg_str)
     }

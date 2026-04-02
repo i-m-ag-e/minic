@@ -2,7 +2,21 @@ use std::collections::HashMap;
 
 use crate::{symbol::Symbol, with_token::WithToken};
 
-type VarMap = HashMap<String, WithToken<Symbol>>;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Linkage {
+    Internal,
+    External,
+    None,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct MapEntry {
+    pub name: WithToken<Symbol>,
+    pub linkage: Linkage,
+    pub defined: bool,
+}
+
+type VarMap = HashMap<String, MapEntry>;
 
 #[derive(Debug)]
 pub struct ScopedVarMap {
@@ -42,21 +56,36 @@ impl ScopedVarMap {
         self.scope_stack.get(self.scope_stack.len() - n - 1)
     }
 
-    pub fn insert(&mut self, name: String, resolved_name: String, token: WithToken<()>) -> Symbol {
+    pub fn insert(
+        &mut self,
+        name: String,
+        resolved_name: String,
+        token: WithToken<()>,
+        linkage: Linkage,
+        defined: bool,
+    ) -> Symbol {
         let symbol = Symbol(self.symbols.len());
         self.symbols.push(resolved_name);
-        self.current_scope_mut()
-            .insert(name, token.with_value(symbol));
+        let map_entry = MapEntry {
+            name: token.with_value(symbol),
+            linkage,
+            defined,
+        };
+        self.current_scope_mut().insert(name, map_entry);
         symbol
     }
 
-    pub fn lookup(&self, name: &str) -> Option<WithToken<Symbol>> {
+    pub fn lookup(&self, name: &str) -> Option<MapEntry> {
         (0..self.scope_stack.len())
             .find_map(|n| {
                 self.nth_innermost_scope(n)
                     .and_then(|scope| scope.get(name))
             })
             .copied()
+    }
+
+    pub fn lookup_in_current_scope(&self, name: &str) -> Option<MapEntry> {
+        self.current_scope().get(name).copied()
     }
 
     pub fn resolve(&self, symbol: Symbol) -> Option<&str> {

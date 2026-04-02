@@ -6,6 +6,7 @@ type: Program
 function_defs:
   - type: FunctionDef
     name: "(pos: 4 - 8) (1:5 - 1:9) Identifier(Symbol(0)) `main`"
+    params: []
     body:
       - type: ReturnStmt
         expr:

@@ -14,28 +14,32 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct Program {
-    pub function_defs: Vec<FunctionDef>,
+    pub function_defs: Vec<FunctionDecl>,
 }
 
+pub type FunctionParam = WithToken<Option<Symbol>>;
+
 #[derive(Debug, Clone)]
-pub struct FunctionDef {
-    pub name: WithToken<String>,
-    // pub params: Vec<String>,
+pub struct FunctionDecl {
+    pub name: WithToken<Symbol>,
+    pub params: Vec<FunctionParam>,
     pub body: Option<Block>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Block {
-    pub body: Vec<BlockItem>,
     pub block_begin: WithToken<()>,
+    pub body: Vec<BlockItem>,
+    pub introduce_scope: bool,
 }
 
 pub type MultiVarDeclaration = Vec<VarDeclaration>;
 
 #[derive(Debug, Clone)]
 pub enum BlockItem {
+    FunctionDecl(FunctionDecl),
     Stmt(Stmt),
-    Decl(MultiVarDeclaration),
+    VarDecl(MultiVarDeclaration),
 }
 
 #[derive(Debug, Clone)]
@@ -48,13 +52,13 @@ pub trait ASTVisitor: StmtVisitor<Self::StmtResult> + ExprVisitor<Self::ExprResu
     type BlockItemResult;
     type BlockResult;
     type ExprResult;
-    type FunctionDefResult;
+    type FunctionDeclResult;
     type ProgramResult;
     type StmtResult;
     type VarDeclResult;
 
     fn visit_program(&mut self, program: &Program) -> Self::ProgramResult;
-    fn visit_function_def(&mut self, func_def: &FunctionDef) -> Self::FunctionDefResult;
+    fn visit_function_def(&mut self, func_decl: &FunctionDecl) -> Self::FunctionDeclResult;
     fn visit_block_item(&mut self, item: &BlockItem) -> Self::BlockItemResult;
     fn visit_block(&mut self, block: &Block) -> Self::BlockResult;
 

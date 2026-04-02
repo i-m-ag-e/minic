@@ -9,6 +9,7 @@ mod semantic_analyzer;
 pub mod source_file;
 mod symbol;
 mod tacky;
+mod type_checker;
 mod with_token;
 
 use std::{
@@ -28,13 +29,14 @@ pub use lexer::lexer_error;
 pub use parser::parser_error;
 
 use crate::{
-    asm::tacky_to_asm,
+    asm::emit_asm_program,
     ast::{ASTVisitor, folder::ASTFolder},
     lexer::{LexerResult, token::TokenType},
     parser::Parser,
     resolver::Resolver,
     semantic_analyzer::SemanticAnalyzer,
     source_file::SourcePosition,
+    type_checker::TypeChecker,
 };
 
 #[derive(clap::Parser)]
@@ -60,14 +62,16 @@ pub struct Cli {
     #[arg(long)]
     parse: bool,
 
-    /// only run till the resolve stage
+    /// only run till the semantic analysis stage
     #[arg(long)]
     validate: bool,
 
-    /// only run till the semantic analysis stage
-    #[arg(long)]
-    analyze: bool,
+    // #[arg(long)]
+    // type_check: bool,
 
+    // /// only run till the semantic analysis stage
+    // #[arg(long)]
+    // analyze: bool,
     /// only run till the codegen phase
     #[arg(long)]
     codegen: bool,
@@ -98,27 +102,17 @@ pub struct Cli {
     debug: bool,
 }
 
-pub fn assemble(
-    source_file: &mut SourceFile,
-    stop_at_lex: bool,
-    stop_at_parse: bool,
-    stop_at_tacky: bool,
-    stop_at_resolve: bool,
-    stop_at_analyze: bool,
-    stop_at_codegen: bool,
-    no_stdout: bool,
-    no_comments: bool,
-    debug: bool,
-) -> anyhow::Result<String> {
+pub fn assemble(source_file: &mut SourceFile, cli: &Cli) -> anyhow::Result<String> {
     let mut interner = SymbolTable::new();
     let lexer = Lexer::new(source_file, &mut interner);
     let tokens: Vec<_> = lexer.collect::<LexerResult<Vec<_>>>()?;
+
     for token in &tokens {
         let lexeme = &source_file[token.begin.0..token.end.0];
         let line_col_start = source_file.line_col(token.begin.0);
         let line_col_end = source_file.line_col(token.end.0);
 
-        if debug {
+        if cli.debug {
             print!(
                 "{:#?} <{:?} :: ({}:{} - {}:{}>)",
                 token, lexeme, line_col_start.0, line_col_start.1, line_col_end.0, line_col_end.1
@@ -127,114 +121,112 @@ pub fn assemble(
 
         if let TokenType::Identifier(sym) = &token.token_type {
             let name = interner.resolve(*sym).unwrap();
-            if debug {
+            if cli.debug {
                 println!(" (ident: {:?})", name);
             }
-        } else if debug {
+        } else if cli.debug {
             println!("");
         }
     }
 
-    let prog = if !stop_at_lex {
-        let mut used_tokens = vec![false; tokens.len()];
-        let mut parser = Parser::new(&tokens, &mut used_tokens, &interner);
-
-        let prog = parser.parse()?;
-        source_file.set_tokens(Parser::filter_saved_tokens(tokens, &mut used_tokens));
-
-        if debug {
-            let mut pretty_printer = pretty_print::PrettyPrinter::new(
-                &interner,
-                Box::new(|table, sym| table.resolve(sym)),
-            );
-            pretty_printer.visit_program(&prog);
-        }
-        // println!("{:#?}", prog);
-        prog
-    } else {
+    if cli.lex {
         return Ok(String::new());
-    };
-
-    let (prog, (new_symbol_table, labels)) = if !stop_at_parse {
-        let mut resolver = Resolver::new(interner, source_file);
-        let prog = resolver.visit_program(prog)?;
-
-        for warn in resolver.warnings() {
-            let line_col_start = source_file.line_col(warn.location.0.0);
-            let line_col_end = source_file.line_col(warn.location.1.0);
-            println!(
-                "{}",
-                format!(
-                    "Warning: {} at {}:{} - {}:{} (at `{}`)",
-                    warn.warn_type,
-                    line_col_start.0,
-                    line_col_start.1,
-                    line_col_end.0,
-                    line_col_end.1,
-                    source_file[warn.location.0.0..warn.location.1.0].replace('\n', "\\n"),
-                )
-                .yellow()
-            );
-        }
-
-        if debug {
-            let mut pretty_printer = pretty_print::PrettyPrinter::new(
-                resolver.symbol_table(),
-                Box::new(|table, sym| table.resolve(sym)),
-            );
-            pretty_printer.visit_program(&prog);
-        }
-        (prog, resolver.release_symbol_table_and_labels())
-    } else {
-        return Ok(String::new());
-    };
-
-    let (prog, switch_map) = if !stop_at_resolve {
-        let mut analyzer = SemanticAnalyzer::new(source_file, labels);
-        let prog = analyzer.visit_program(prog)?;
-        if debug {
-            let mut pretty_printer = pretty_print::PrettyPrinter::new(
-                &new_symbol_table,
-                Box::new(|table, sym| table.resolve(sym)),
-            );
-            pretty_printer.visit_program(&prog);
-        }
-        (prog, analyzer.release_switch_map())
-    } else {
-        return Ok(String::new());
-    };
-
-    let tacky_prog = if !stop_at_analyze {
-        let mut tacky_gen =
-            tacky::tacky_gen::TackyGen::new(source_file, switch_map, &new_symbol_table);
-        let tacky_prog = tacky_gen.visit_program(&prog);
-        if debug {
-            println!("{:#?}", tacky_prog);
-        }
-        tacky_prog
-    } else {
-        return Ok(String::new());
-    };
-
-    let asm_program = if !stop_at_tacky {
-        let asm_program = tacky_to_asm(&tacky_prog);
-        if debug {
-            println!("{:#?}", asm_program);
-        }
-        asm_program
-    } else {
-        return Ok(String::new());
-    };
-
-    if !stop_at_codegen {
-        let mut asm_code = String::new();
-        asm_program.to_asm_string(&mut asm_code, no_comments)?;
-        if !no_stdout {
-            println!("{}", asm_code);
-        }
-        return Ok(asm_code);
     }
-    Ok(String::new())
+
+    let mut used_tokens = vec![false; tokens.len()];
+    let mut parser = Parser::new(&tokens, &mut used_tokens, &interner);
+
+    let prog = parser.parse()?;
+    source_file.set_tokens(Parser::filter_saved_tokens(tokens, &mut used_tokens));
+
+    if cli.debug {
+        let mut pretty_printer =
+            pretty_print::PrettyPrinter::new(&interner, Box::new(|table, sym| table.resolve(sym)));
+        pretty_printer.visit_program(&prog);
+    }
+
+    if cli.parse {
+        return Ok(String::new());
+    }
+
+    let mut resolver = Resolver::new(interner, source_file);
+    let prog = resolver.visit_program(prog)?;
+
+    for warn in resolver.warnings() {
+        let line_col_start = source_file.line_col(warn.location.0.0);
+        let line_col_end = source_file.line_col(warn.location.1.0);
+        println!(
+            "{}",
+            format!(
+                "Warning: {} at {}:{} - {}:{} (at `{}`)",
+                warn.warn_type,
+                line_col_start.0,
+                line_col_start.1,
+                line_col_end.0,
+                line_col_end.1,
+                source_file[warn.location.0.0..warn.location.1.0].replace('\n', "\\n"),
+            )
+            .yellow()
+        );
+    }
+
+    if cli.debug {
+        let mut pretty_printer = pretty_print::PrettyPrinter::new(
+            resolver.symbol_table(),
+            Box::new(|table, sym| table.resolve(sym)),
+        );
+        pretty_printer.visit_program(&prog);
+    }
+
+    let (var_map, labels) = resolver.release_symbol_table_and_labels();
+
+    TypeChecker::new(source_file, &var_map).visit_program(&prog)?;
+
+    let mut analyzer = SemanticAnalyzer::new(source_file, labels);
+    let prog = analyzer.visit_program(prog)?;
+
+    if cli.debug {
+        println!("program: {:#?}", prog);
+        let mut pretty_printer =
+            pretty_print::PrettyPrinter::new(&var_map, Box::new(|table, sym| table.resolve(sym)));
+        pretty_printer.visit_program(&prog);
+    }
+
+    let switch_map = analyzer.release_switch_map();
+
+    if cli.validate {
+        return Ok(String::new());
+    }
+
+    let mut tacky_gen = tacky::tacky_gen::TackyGen::new(source_file, switch_map, &var_map);
+    let tacky_prog = tacky_gen.visit_program(&prog);
+
+    if cli.debug {
+        println!("{:#?}", tacky_prog);
+    }
+
+    if cli.tacky {
+        return Ok(String::new());
+    }
+
+    let asm_program = emit_asm_program(tacky_prog);
+
+    if cli.debug {
+        println!("{:#?}", asm_program);
+    }
+
+    if cli.codegen {
+        return Ok(String::new());
+    }
+
+    let mut asm_code = String::new();
+    asm_program.to_asm_string(&mut asm_code, cli.no_comments)?;
+
+    if !cli.no_stdout {
+        println!("{}", asm_code);
+    }
+
+    Ok(asm_code)
 }
 
 fn make_error(
@@ -270,6 +262,18 @@ fn handle_compile_error(compile_err: anyhow::Error, source_file: &SourceFile) ->
         make_error(source_file, &msg, lexer_err)
     } else if let Some(parse_err) = compile_err.downcast_ref::<parser_error::ParserError>() {
         make_error(source_file, &msg, parse_err.span)
+    } else if let Some(resolver_err) =
+        compile_err.downcast_ref::<resolver::resolver_error::ResolverError>()
+    {
+        make_error(source_file, &msg, resolver_err.span)
+    } else if let Some(type_checker_err) =
+        compile_err.downcast_ref::<type_checker::type_checker_error::TypeCheckerError>()
+    {
+        make_error(source_file, &msg, type_checker_err.span)
+    } else if let Some(semantic_analyzer_err) =
+        compile_err.downcast_ref::<semantic_analyzer::SemanticAnalyzerError>()
+    {
+        make_error(source_file, &msg, semantic_analyzer_err.span)
     } else {
         compile_err
     }
@@ -336,19 +340,7 @@ pub fn compile(cli: &Cli) -> anyhow::Result<()> {
         if cli.debug {
             println!("Source: {:?}", source);
         }
-        let asm = assemble(
-            &mut source,
-            cli.lex,
-            cli.parse,
-            cli.tacky,
-            cli.validate,
-            cli.analyze,
-            cli.codegen,
-            cli.no_stdout,
-            cli.no_comments,
-            cli.debug,
-        )
-        .map_err(|e| handle_compile_error(e, &source))?;
+        let asm = assemble(&mut source, &cli).map_err(|e| handle_compile_error(e, &source))?;
 
         if cli.lex || cli.parse || cli.validate || cli.tacky || cli.codegen {
             continue;
@@ -372,7 +364,7 @@ pub fn compile(cli: &Cli) -> anyhow::Result<()> {
         options.push(output.to_owned());
     } else if asm_files.len() == 1 {
         let output_file = Path::new(&asm_files[0])
-            .with_extension("")
+            .with_extension(if cli.object_file { "o" } else { "" })
             .to_str()
             .ok_or(anyhow::anyhow!("invalid characters in file path"))?
             .to_owned();

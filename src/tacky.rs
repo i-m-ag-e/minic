@@ -9,13 +9,13 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Serialize)]
-pub struct Program(pub FunctionDef);
+pub struct Program(pub Vec<FunctionDef>);
 
 #[derive(Debug, Clone)]
 pub struct FunctionDef {
     pub name: String,
     pub body: Vec<Instruction>,
-    pub pos: (usize, usize),
+    pub params: Vec<Option<String>>,
 }
 
 impl Serialize for FunctionDef {
@@ -23,8 +23,9 @@ impl Serialize for FunctionDef {
     where
         S: serde::Serializer,
     {
-        let mut state = serializer.serialize_struct("FunctionDef", 2)?;
+        let mut state = serializer.serialize_struct("FunctionDef", 4)?;
         state.serialize_field("name", &self.name)?;
+        state.serialize_field("params", &self.params)?;
         state.serialize_field(
             "body",
             &self
@@ -55,6 +56,12 @@ pub enum InstructionKind {
         dest: Value,
         src: Value,
     },
+    FunctionCall {
+        args: Vec<Value>,
+        dest: Value,
+        func_name: String,
+        is_external: bool,
+    },
     Jump(String),
     JumpIfEqual {
         lhs: Value,
@@ -64,7 +71,8 @@ pub enum InstructionKind {
     JumpIfZero(Value, String),
     JumpIfNotZero(Value, String),
     Label(String),
-    Return(Value),
+    Return,
+    ReturnValue(Value),
     Unary {
         op: UnaryOp,
         dest: Value,
@@ -86,6 +94,22 @@ impl InstructionKind {
             InstructionKind::Copy { dest, src } => {
                 format!("(copy) `{}` = `{}`", dest, src)
             }
+            InstructionKind::FunctionCall {
+                args,
+                dest,
+                func_name,
+                is_external: _,
+            } => {
+                format!(
+                    "`{}` = {}({})",
+                    dest,
+                    func_name,
+                    args.iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
             InstructionKind::Jump(_label) => String::new(),
             InstructionKind::JumpIfEqual { lhs, rhs, label: _ } => {
                 format!("jmp if `{}` == `{}`", lhs, rhs)
@@ -93,7 +117,8 @@ impl InstructionKind {
             InstructionKind::JumpIfNotZero(cond, _label) => format!("jmp if `{}` != 0", cond),
             InstructionKind::JumpIfZero(cond, _label) => format!("jmp if `{}` == 0", cond),
             InstructionKind::Label(_label) => String::new(),
-            InstructionKind::Return(val) => format!("return `{}`", val),
+            InstructionKind::Return => "return".to_string(),
+            InstructionKind::ReturnValue(val) => format!("return `{}`", val),
             InstructionKind::Unary { op, dest, src } => {
                 format!("(unary) `{}` = `{}` {}", dest, op, src)
             }

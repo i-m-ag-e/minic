@@ -2,21 +2,22 @@
 source: src/tacky/tacky_tests.rs
 expression: "test_string_success(\"int main(void) { return ~-42; }\")?"
 ---
-name: main
-body:
-  - Unary:
-      op: Negate
-      dest:
-        Var: pv.0
-      src:
-        Constant: 42
-  - Unary:
-      op: BitNot
-      dest:
+- name: main
+  params: []
+  body:
+    - Unary:
+        op: Negate
+        dest:
+          Var: pv.0
+        src:
+          Constant: 42
+    - Unary:
+        op: BitNot
+        dest:
+          Var: pv.1
+        src:
+          Var: pv.0
+    - ReturnValue:
         Var: pv.1
-      src:
-        Var: pv.0
-  - Return:
-      Var: pv.1
-  - Return:
-      Constant: 0
+    - ReturnValue:
+        Constant: 0

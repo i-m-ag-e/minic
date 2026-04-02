@@ -75,6 +75,14 @@ impl<'a> ExprVisitor<Value> for JsonVisitor<'a> {
         })
     }
 
+    fn visit_function_call(&mut self, expr: &expr::FunctionCall) -> Value {
+        json!({
+            "type": "FunctionCall",
+            "callee": self.visit_expr(&expr.callee_expr),
+            "args": expr.args.iter().map(|e| self.visit_expr(e)).collect::<Vec<_>>()
+        })
+    }
+
     fn visit_unary_expr(&mut self, expr: &expr::UnaryExpr) -> Value {
         let op_token = self.visit_token_short(expr.operator.get_token(&self.tokens));
         json!({
@@ -230,7 +238,7 @@ impl<'a> StmtVisitor<Value> for JsonVisitor<'a> {
 
 impl<'a> ASTVisitor for JsonVisitor<'a> {
     type ProgramResult = Value;
-    type FunctionDefResult = Value;
+    type FunctionDeclResult = Value;
     type StmtResult = Value;
     type ExprResult = Value;
     type BlockItemResult = Value;
@@ -244,18 +252,20 @@ impl<'a> ASTVisitor for JsonVisitor<'a> {
         })
     }
 
-    fn visit_function_def(&mut self, func_def: &FunctionDef) -> Self::FunctionDefResult {
+    fn visit_function_def(&mut self, func_def: &FunctionDecl) -> Self::FunctionDeclResult {
         json!({
             "type": "FunctionDef",
             "name": self.visit_token_short(func_def.name.get_token(&self.tokens)),
+            "params": func_def.params.iter().map(|param| self.visit_token_short(param.get_token(&self.tokens))).collect::<Vec<_>>(),
             "body": func_def.body.as_ref().map(|block| self.visit_block(block))
         })
     }
 
     fn visit_block_item(&mut self, item: &BlockItem) -> Self::BlockItemResult {
         match item {
+            BlockItem::FunctionDecl(decl) => self.visit_function_def(decl),
             BlockItem::Stmt(stmt) => self.visit_stmt(stmt),
-            BlockItem::Decl(decl) => decl
+            BlockItem::VarDecl(decl) => decl
                 .iter()
                 .map(|d| self.visit_var_decl(d))
                 .collect::<Value>(),

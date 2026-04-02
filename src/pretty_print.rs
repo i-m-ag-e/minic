@@ -67,6 +67,19 @@ impl<'a, Table> ExprVisitor<()> for PrettyPrinter<'a, Table> {
         }
     }
 
+    fn visit_function_call(&mut self, expr: &crate::ast::expr::FunctionCall) -> () {
+        // fields callee_expr: Box<Expr>, args: Vec<WithToken<Expr>>,
+        self.visit_expr(&expr.callee_expr);
+        print!("(");
+        for (i, arg) in expr.args.iter().enumerate() {
+            self.visit_expr(&arg.item);
+            if i < expr.args.len() - 1 {
+                print!(", ");
+            }
+        }
+        print!(")");
+    }
+
     fn visit_unary_expr(&mut self, expr: &crate::ast::expr::UnaryExpr) -> () {
         print!("(");
         print!("{}", expr.operator.item);
@@ -214,7 +227,7 @@ impl<'a, Table> StmtVisitor<()> for PrettyPrinter<'a, Table> {
 
 impl<'a, Table> ASTVisitor for PrettyPrinter<'a, Table> {
     type ProgramResult = ();
-    type FunctionDefResult = ();
+    type FunctionDeclResult = ();
     type StmtResult = ();
     type ExprResult = ();
     type BlockItemResult = ();
@@ -229,9 +242,21 @@ impl<'a, Table> ASTVisitor for PrettyPrinter<'a, Table> {
 
     fn visit_function_def(
         &mut self,
-        func_def: &crate::ast::FunctionDef,
-    ) -> Self::FunctionDefResult {
-        println!("Function: {}", func_def.name.as_str());
+        func_def: &crate::ast::FunctionDecl,
+    ) -> Self::FunctionDeclResult {
+        let func_name =
+            (self.get_symbol)(&self.symbol_table, func_def.name.item).unwrap_or("<unknown>");
+        print!("Function: {}(", func_name);
+        for param in &func_def.params {
+            if let Some(param_name) = param.item {
+                let name = (self.get_symbol)(&self.symbol_table, param_name).unwrap_or("<unknown>");
+                print!("{}, ", name);
+            } else {
+                print!("<unnamed>, ");
+            }
+        }
+        println!(")");
+
         self.indent_level += 1;
         if let Some(body) = &func_def.body {
             self.visit_block(body)
@@ -243,7 +268,8 @@ impl<'a, Table> ASTVisitor for PrettyPrinter<'a, Table> {
 
     fn visit_block_item(&mut self, item: &crate::ast::BlockItem) -> Self::BlockItemResult {
         match item {
-            BlockItem::Decl(decls) => {
+            BlockItem::FunctionDecl(decl) => self.visit_function_def(decl),
+            BlockItem::VarDecl(decls) => {
                 decls.iter().for_each(|decl| self.visit_var_decl(decl));
             }
             BlockItem::Stmt(stmt) => self.visit_stmt(stmt),
