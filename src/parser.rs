@@ -1,13 +1,13 @@
 pub mod parser_error;
 
 use crate::ast::expr::{
-    AssignExpr, BinaryExpr, BinaryOp, ConditionalExpr, Expr, UnaryExpr, UnaryOp,
+    AssignExpr, BinaryExpr, BinaryOp, ConditionalExpr, Expr, FunctionCall, UnaryExpr, UnaryOp,
 };
 use crate::ast::stmt::{
     BreakStmt, BreakTarget, CaseStmt, ContinueStmt, DefaultStmt, DoWhileStmt, ForStmt, ForStmtInit,
     IfStmt, Label, LoopID, SwitchStmt, WhileStmt,
 };
-use crate::ast::{Block, BlockItem, FunctionDef, MultiVarDeclaration, VarDeclaration};
+use crate::ast::{Block, BlockItem, FunctionDecl, MultiVarDeclaration, VarDeclaration};
 use crate::ast::{Program, stmt::Stmt};
 use crate::lexer::token::{Literal, TokenID};
 use crate::source_file::SourcePosition;
@@ -200,41 +200,91 @@ impl<'a> Parser<'a> {
     fn parse_program(&mut self) -> ParseResult<Program> {
         let mut function_defs = Vec::new();
         while !self.is_at_end() {
-            let func_def = self.parse_function_def()?;
+            let func_def = self.parse_function_decl(true, true)?;
             function_defs.push(func_def);
         }
         Ok(Program { function_defs })
     }
 
-    fn parse_function_def(&mut self) -> ParseResult<FunctionDef> {
-        self.consume(TokenType::KInt)?;
+    fn parse_function_decl(
+        &mut self,
+        consume_return_type: bool,
+        allow_definition: bool,
+    ) -> ParseResult<FunctionDecl> {
+        if consume_return_type {
+            self.consume(TokenType::KInt)?;
+        }
 
-        self.consume_if(
+        let token = self.consume_if(
             |tt| matches!(tt, TokenType::Identifier(_)),
             |error| ParserErrorType::ExpectedAnother {
                 expected: TokenType::Identifier(Symbol(0)),
                 found: error.clone(),
             },
         )?;
-        let func_name = self.save_previous();
+        let TokenType::Identifier(sym) = token.token_type else {
+            unreachable!()
+        };
+        let name = WithToken::new(sym, self.save_previous());
 
         self.consume(TokenType::LeftParen)?;
-        self.consume(TokenType::KVoid)?;
+
+        let mut params = Vec::new();
+
+        if let Some(tt @ (TokenType::KVoid | TokenType::RightParen)) = self.peek_token_type() {
+            if let TokenType::KVoid = tt {
+                self.consume(TokenType::KVoid)?;
+            }
+        } else {
+            loop {
+                let param_token_id = self.save_and_consume(TokenType::KInt)?;
+                let param_symbol = if let Some(TokenType::Comma | TokenType::RightParen) =
+                    self.peek_token_type()
+                {
+                    None
+                } else {
+                    let param_token = self.consume_if(
+                        |tt| matches!(tt, TokenType::Identifier(_)),
+                        |error| ParserErrorType::ExpectedAnother {
+                            expected: TokenType::Identifier(Symbol(0)),
+                            found: error.clone(),
+                        },
+                    )?;
+                    let TokenType::Identifier(sym) = param_token.token_type else {
+                        unreachable!()
+                    };
+                    Some(sym)
+                };
+                params.push(WithToken::new(param_symbol, param_token_id));
+
+                if let Some(TokenType::RightParen) = self.peek_token_type() {
+                    break;
+                }
+                self.consume(TokenType::Comma)?;
+            }
+        }
+
         self.consume(TokenType::RightParen)?;
 
         let body = if let Some(TokenType::LeftBrace) = self.peek_token_type() {
-            Some(self.parse_block()?)
+            if !allow_definition {
+                let token = self.tokens[name.token_id];
+                let name = self.symbol_table.resolve(name.item).unwrap_or("<unknown>");
+                return Err(ParserError {
+                    err_type: ParserErrorType::NestedFunctionDefinition(name.to_string()),
+                    span: token.span(),
+                });
+            }
+            Some(self.parse_block(false)?)
         } else {
+            self.consume(TokenType::Semicolon)?;
             None
         };
 
-        Ok(FunctionDef {
-            name: WithToken::new("main".to_string(), func_name),
-            body,
-        })
+        Ok(FunctionDecl { name, params, body })
     }
 
-    fn parse_block(&mut self) -> ParseResult<Block> {
+    fn parse_block(&mut self, introduce_scope: bool) -> ParseResult<Block> {
         self.consume(TokenType::LeftBrace)?;
         let block_begin = WithToken::new((), self.save_previous());
         let mut body = Vec::new();
@@ -248,18 +298,43 @@ impl<'a> Parser<'a> {
         }
 
         self.consume(TokenType::RightBrace)?;
-        Ok(Block { body, block_begin })
+        Ok(Block {
+            body,
+            block_begin,
+            introduce_scope,
+        })
     }
 
     fn parse_block_item(&mut self) -> ParseResult<BlockItem> {
         match self.peek_token_type() {
-            Some(TokenType::KInt) => self.parse_declaration(true).map(BlockItem::Decl),
+            Some(TokenType::KInt) => self.parse_declaration(true),
             _ => self.parse_stmt().map(BlockItem::Stmt),
         }
     }
 
-    fn parse_declaration(&mut self, consume_semicolon: bool) -> ParseResult<MultiVarDeclaration> {
+    fn parse_declaration(&mut self, consume_semicolon: bool) -> ParseResult<BlockItem> {
         self.consume(TokenType::KInt)?;
+
+        if let Some(TokenType::Identifier(_)) = self.peek_token_type() {
+            if let Some(TokenType::LeftParen) = self.peek_next_token_type() {
+                return self
+                    .parse_function_decl(false, false)
+                    .map(BlockItem::FunctionDecl);
+            }
+        }
+
+        self.parse_var_declaration(false, consume_semicolon)
+            .map(BlockItem::VarDecl)
+    }
+
+    fn parse_var_declaration(
+        &mut self,
+        consume_return_type: bool,
+        consume_semicolon: bool,
+    ) -> ParseResult<MultiVarDeclaration> {
+        if consume_return_type {
+            self.consume(TokenType::KInt)?;
+        }
 
         let mut declarations = Vec::new();
         loop {
@@ -312,7 +387,7 @@ impl<'a> Parser<'a> {
             Some(TokenType::KDo) => self.parse_do_while(),
             Some(TokenType::KFor) => self.parse_for_stmt(),
             Some(TokenType::KGoto) => self.parse_goto_stmt(),
-            Some(TokenType::LeftBrace) => Ok(Stmt::Compound(self.parse_block()?)),
+            Some(TokenType::LeftBrace) => Ok(Stmt::Compound(self.parse_block(true)?)),
             Some(TokenType::KIf) => self.parse_if_stmt(),
             Some(TokenType::KReturn) => self.parse_return_stmt(),
             Some(TokenType::KSwitch) => self.parse_switch_stmt(),
@@ -432,7 +507,9 @@ impl<'a> Parser<'a> {
         let left_paren = self.save_and_consume(TokenType::LeftParen)?;
         let initializer = match self.peek_token_type() {
             Some(TokenType::Semicolon) => None,
-            Some(TokenType::KInt) => Some(ForStmtInit::Declaration(self.parse_declaration(false)?)),
+            Some(TokenType::KInt) => Some(ForStmtInit::Declaration(
+                self.parse_var_declaration(true, false)?,
+            )),
             _ => Some(ForStmtInit::Expression(self.parse_expr()?)),
         };
         let initializer = WithToken::new(initializer, left_paren);
@@ -691,9 +768,38 @@ impl<'a> Parser<'a> {
                 operand: Box::new(expr),
                 postfix: true,
             }))
+        } else if let Some(TokenType::LeftParen) = self.peek_token_type() {
+            self.parse_function_call(expr)
         } else {
             Ok(expr)
         }
+    }
+
+    fn parse_function_call(&mut self, expr: Expr) -> ParseResult<Expr> {
+        let left_paren = self.save_and_consume(TokenType::LeftParen)?;
+        let mut sep_token = left_paren;
+        let mut args = Vec::new();
+
+        if let Some(TokenType::RightParen) = self.peek_token_type() {
+        } else {
+            loop {
+                let arg = self.parse_expr()?;
+                args.push(WithToken::new(arg, sep_token));
+
+                if let Some(TokenType::RightParen) = self.peek_token_type() {
+                    break;
+                }
+
+                sep_token = self.save_and_consume(TokenType::Comma)?;
+            }
+        }
+
+        self.consume(TokenType::RightParen)?;
+
+        Ok(Expr::FunctionCall(FunctionCall {
+            callee_expr: WithToken::new(Box::new(expr), sep_token),
+            args,
+        }))
     }
 
     fn parse_literal(&mut self) -> ParseResult<Expr> {

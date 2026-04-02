@@ -12,6 +12,24 @@ pub enum ResolverErrorType {
     },
     #[error("Invalid assignment target")]
     InvalidLValue,
+    #[error(
+        "`{name}` redeclared as a different kind (previously declared as {prev_kind}, now as {new_kind}; previous declaration at {prev_line}:{prev_col})"
+    )]
+    RedeclaredAsDifferentKind {
+        name: String,
+        new_kind: &'static str,
+        prev_kind: &'static str,
+        prev_line: usize,
+        prev_col: usize,
+    },
+    #[error(
+        "More than one definitions for function `{name}`  (previous defintion at {prev_line}:{prev_col})"
+    )]
+    RedefinedFunction {
+        name: String,
+        prev_line: usize,
+        prev_col: usize,
+    },
     #[error("Undefined variable: {0}")]
     UndefinedVariable(String),
     #[error("Variable already defined: previous declaration at {prev_line}:{prev_col}")]

@@ -1,5 +1,5 @@
 use crate::{
-    asm::tacky_to_asm,
+    asm::emit_asm_program,
     ast::{ASTVisitor, folder::ASTFolder},
     lexer::{Lexer, LexerResult},
     parser::Parser,
@@ -34,7 +34,7 @@ fn compile_to_asm_string(s: &str) -> anyhow::Result<String> {
     let mut tacky_gen = TackyGen::new(&input, switch_map, &var_map);
     let tacky_prog = tacky_gen.visit_program(&prog);
 
-    let asm_ast = tacky_to_asm(&tacky_prog);
+    let asm_ast = emit_asm_program(tacky_prog);
 
     let mut asm_str = String::new();
     asm_ast.to_asm_string(&mut asm_str, true)?;

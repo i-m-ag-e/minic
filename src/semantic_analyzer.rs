@@ -25,7 +25,7 @@ pub enum SemanticError {
     CaseOutsideLoop,
     #[error("`default` used outside a switch statement")]
     DefaultOutsideLoop,
-    #[error("duplicate case label (previous case with same value at {prev_line}:{prev_col}")]
+    #[error("duplicate case label (previous case with same value at {prev_line}:{prev_col})")]
     DuplicateCaseLabel { prev_line: usize, prev_col: usize },
     #[error(
         "`default` used twice in the same switch statement; previous use at {prev_line}:{prev_col}"

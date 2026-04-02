@@ -14,8 +14,23 @@ pub enum Expr {
     Binary(BinaryExpr),
     Conditional(ConditionalExpr),
     Constant(WithToken<Literal>),
+    FunctionCall(FunctionCall),
     Unary(UnaryExpr),
     Variable(WithToken<Symbol>),
+}
+
+impl Expr {
+    pub fn token(&self) -> WithToken<()> {
+        match self {
+            Expr::Assignment(assign) => assign.eq_token,
+            Expr::Binary(binary_expr) => binary_expr.operator.with_value(()),
+            Expr::Conditional(conditional_expr) => conditional_expr.then_expr.with_value(()),
+            Expr::Constant(lit) => lit.with_value(()),
+            Expr::FunctionCall(call) => call.callee_expr.with_value(()),
+            Expr::Unary(unary_expr) => unary_expr.operator.with_value(()),
+            Expr::Variable(var) => var.with_value(()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -204,6 +219,12 @@ pub struct ConditionalExpr {
     pub else_expr: WithToken<Box<Expr>>, // captures the ':' token
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionCall {
+    pub callee_expr: WithToken<Box<Expr>>, // token: left parenthesis
+    pub args: Vec<WithToken<Expr>>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub enum UnaryOp {
     BitNot,
@@ -253,6 +274,7 @@ pub trait ExprVisitor<R> {
     fn visit_binary_expr(&mut self, expr: &BinaryExpr) -> R;
     fn visit_conditional_expr(&mut self, expr: &ConditionalExpr) -> R;
     fn visit_constant(&mut self, expr: &WithToken<Literal>) -> R;
+    fn visit_function_call(&mut self, expr: &FunctionCall) -> R;
     fn visit_unary_expr(&mut self, expr: &UnaryExpr) -> R;
     fn visit_variable(&mut self, var: &WithToken<Symbol>) -> R;
 
@@ -262,6 +284,7 @@ pub trait ExprVisitor<R> {
             Expr::Binary(binary_expr) => self.visit_binary_expr(binary_expr),
             Expr::Conditional(conditional_expr) => self.visit_conditional_expr(conditional_expr),
             Expr::Constant(lit) => self.visit_constant(lit),
+            Expr::FunctionCall(call) => self.visit_function_call(call),
             Expr::Unary(unary_expr) => self.visit_unary_expr(unary_expr),
             Expr::Variable(var) => self.visit_variable(var),
         }

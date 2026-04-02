@@ -1,6 +1,6 @@
 use crate::ast::expr::Expr;
 use crate::ast::stmt::{self, Stmt};
-use crate::ast::{Block, BlockItem, FunctionDef, Program, VarDeclaration, expr};
+use crate::ast::{Block, BlockItem, FunctionDecl, Program, VarDeclaration, expr};
 use crate::lexer::token::Literal;
 use crate::symbol::Symbol;
 use crate::with_token::WithToken;
@@ -17,6 +17,7 @@ pub trait ASTFolder<E> {
             Expr::Binary(binary_expr) => self.visit_binary_expr(binary_expr),
             Expr::Conditional(conditional_expr) => self.visit_conditional_expr(conditional_expr),
             Expr::Constant(lit) => self.visit_constant(lit),
+            Expr::FunctionCall(call) => self.visit_function_call(call),
             Expr::Unary(unary_expr) => self.visit_unary_expr(unary_expr),
             Expr::Variable(var) => self.visit_variable(var),
         }
@@ -79,6 +80,24 @@ pub trait ASTFolder<E> {
 
     fn fold_constant(&mut self, expr: WithToken<Literal>) -> Result<Expr, E> {
         Ok(Expr::Constant(expr))
+    }
+
+    fn visit_function_call(&mut self, expr: expr::FunctionCall) -> Result<Expr, E> {
+        self.fold_function_call(expr)
+    }
+
+    fn fold_function_call(&mut self, expr: expr::FunctionCall) -> Result<Expr, E> {
+        let callee_expr = expr
+            .callee_expr
+            .map_transpose_result(|e| self.visit_expr(*e))?
+            .map(Box::new);
+        let args = expr
+            .args
+            .into_iter()
+            .map(|arg| arg.map_transpose_result(|e| self.visit_expr(e)))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Expr::FunctionCall(expr::FunctionCall { callee_expr, args }))
     }
 
     fn visit_unary_expr(&mut self, expr: expr::UnaryExpr) -> Result<Expr, E> {
@@ -272,7 +291,11 @@ pub trait ASTFolder<E> {
     }
 
     fn fold_label_stmt(&mut self, stmt: stmt::Label) -> Result<Stmt, E> {
-        Ok(Stmt::Label(stmt))
+        let next_stmt = Box::new(self.visit_stmt(*stmt.next_stmt)?);
+        Ok(Stmt::Label(stmt::Label {
+            name: stmt.name,
+            next_stmt,
+        }))
     }
 
     fn visit_null_stmt(&mut self) -> Result<Stmt, E> {
@@ -339,17 +362,18 @@ pub trait ASTFolder<E> {
         Ok(Program { function_defs })
     }
 
-    fn visit_function_def(&mut self, func_def: FunctionDef) -> Result<FunctionDef, E> {
+    fn visit_function_def(&mut self, func_def: FunctionDecl) -> Result<FunctionDecl, E> {
         self.fold_function_def(func_def)
     }
 
-    fn fold_function_def(&mut self, func_def: FunctionDef) -> Result<FunctionDef, E> {
-        let body = func_def
+    fn fold_function_def(&mut self, func_decl: FunctionDecl) -> Result<FunctionDecl, E> {
+        let body = func_decl
             .body
             .map(|body| self.visit_block(body))
             .transpose()?;
-        Ok(FunctionDef {
-            name: func_def.name,
+        Ok(FunctionDecl {
+            name: func_decl.name,
+            params: func_decl.params,
             body,
         })
     }
@@ -360,8 +384,11 @@ pub trait ASTFolder<E> {
 
     fn fold_block_item(&mut self, item: BlockItem) -> Result<BlockItem, E> {
         match item {
+            BlockItem::FunctionDecl(decl) => {
+                Ok(BlockItem::FunctionDecl(self.visit_function_def(decl)?))
+            }
             BlockItem::Stmt(stmt) => Ok(BlockItem::Stmt(self.visit_stmt(stmt)?)),
-            BlockItem::Decl(decls) => Ok(BlockItem::Decl(
+            BlockItem::VarDecl(decls) => Ok(BlockItem::VarDecl(
                 decls
                     .into_iter()
                     .map(|decl| self.visit_var_decl(decl))
@@ -383,6 +410,7 @@ pub trait ASTFolder<E> {
         Ok(Block {
             body,
             block_begin: block.block_begin,
+            introduce_scope: block.introduce_scope,
         })
     }
 

@@ -1,13 +1,13 @@
-mod resolver_error;
+pub mod resolver_error;
 pub mod var_map;
 
 use std::collections::HashMap;
 
 use crate::{
-    ast::{self, FunctionDef, VarDeclaration, expr::Expr, folder::ASTFolder, stmt::Stmt},
+    ast::{self, FunctionDecl, VarDeclaration, expr::Expr, folder::ASTFolder, stmt::Stmt},
     resolver::{
         resolver_error::{ResolverError, ResolverErrorType, ResolverWarning, ResolverWarningType},
-        var_map::ScopedVarMap,
+        var_map::{Linkage, MapEntry, ScopedVarMap},
     },
     source_file::SourceFile,
     symbol::{Symbol, SymbolTable},
@@ -52,6 +52,13 @@ impl<'a> Resolver<'a> {
 
     pub fn warnings(&self) -> &[ResolverWarning] {
         &self.warnings
+    }
+
+    fn make_error<T>(&self, err_type: ResolverErrorType, token: WithToken<T>) -> ResolverError {
+        let span = token
+            .get_token(&self.source_file.get_tokens_checked())
+            .span();
+        ResolverError { err_type, span }
     }
 
     fn updated_variable_name<T>(&self, name: &str, token: &WithToken<T>) -> String {
@@ -99,6 +106,26 @@ impl<'a> ASTFolder<ResolverError> for Resolver<'a> {
         }
     }
 
+    fn visit_function_call(
+        &mut self,
+        expr: ast::expr::FunctionCall,
+    ) -> Result<Expr, ResolverError> {
+        let callee_expr = expr
+            .callee_expr
+            .map_transpose_result(|e| self.visit_expr(*e))?
+            .into_boxed();
+        let args = expr
+            .args
+            .into_iter()
+            .map(|arg| arg.map_transpose_result(|e| self.visit_expr(e)))
+            .collect::<Result<_, _>>()?;
+
+        Ok(Expr::FunctionCall(ast::expr::FunctionCall {
+            callee_expr,
+            args,
+        }))
+    }
+
     fn visit_unary_expr(&mut self, expr: ast::expr::UnaryExpr) -> Result<Expr, ResolverError> {
         if let ast::expr::UnaryOp::Decrement | ast::expr::UnaryOp::Increment = *expr.operator {
             if let Expr::Variable(_) = *expr.operand {
@@ -124,7 +151,7 @@ impl<'a> ASTFolder<ResolverError> for Resolver<'a> {
     fn visit_variable(&mut self, var: WithToken<Symbol>) -> ResolverResult<Expr> {
         let name_str = self.resolve_st_assert_exists(&var.item)?;
         if let Some(resolved_sym) = self.var_map.lookup(&name_str) {
-            Ok(Expr::Variable(resolved_sym))
+            Ok(Expr::Variable(var.with_value(resolved_sym.name.item)))
         } else {
             Err(ResolverError {
                 err_type: ResolverErrorType::UndefinedVariable(name_str.to_string()),
@@ -194,28 +221,102 @@ impl<'a> ASTFolder<ResolverError> for Resolver<'a> {
     }
 
     fn visit_block(&mut self, block: ast::Block) -> Result<ast::Block, ResolverError> {
-        self.begin_scope();
+        let introduce_scope = block.introduce_scope;
+
+        if introduce_scope {
+            self.begin_scope();
+        }
         let result = self.fold_block(block)?;
-        self.end_scope();
+
+        if introduce_scope {
+            self.end_scope();
+        }
 
         Ok(result)
     }
 
-    fn visit_function_def(&mut self, func_def: FunctionDef) -> ResolverResult<FunctionDef> {
-        self.current_function = Some(func_def.name.clone());
+    fn visit_function_def(&mut self, func_def: FunctionDecl) -> ResolverResult<FunctionDecl> {
+        let name_str = self
+            .resolve_st_assert_exists(&func_def.name.item)?
+            .to_string();
+
+        self.current_function = Some(func_def.name.with_value(name_str.clone()));
         self.current_function_return = false;
 
+        if let Some(prev_entry) = self.var_map.lookup_in_current_scope(&name_str)
+            && prev_entry.linkage == Linkage::None
+        {
+            let (prev_line, prev_col) = self
+                .source_file
+                .line_col_token_begin(prev_entry.name.token_id);
+            return Err(self.make_error(
+                ResolverErrorType::RedeclaredAsDifferentKind {
+                    name: name_str.to_string(),
+                    new_kind: "function",
+                    prev_kind: "local varable",
+                    prev_line,
+                    prev_col,
+                },
+                func_def.name,
+            ));
+        }
+
+        let prev_entry = self.var_map.lookup(&name_str).unwrap_or(MapEntry {
+            name: func_def.name.with_value(Symbol(0)),
+            linkage: Linkage::None,
+            defined: false,
+        });
+
+        let new_symbol = self.var_map.insert(
+            name_str.clone(),
+            name_str.clone(),
+            func_def.name.with_value(()),
+            Linkage::External,
+            func_def.body.is_some(),
+        );
+
+        self.begin_scope();
+
+        let params = func_def
+            .params
+            .into_iter()
+            .map(|param| {
+                let token = param.with_value(());
+                if let Some(param_var) = param.item {
+                    self.visit_var_decl(VarDeclaration {
+                        name: token.with_value(param_var),
+                        initializer: None,
+                    })
+                    .map(|var_decl| var_decl.name.map(Some))
+                } else {
+                    Ok(token.with_value(None))
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         let resolved_body = if let Some(body) = func_def.body {
+            if prev_entry.defined {
+                let (prev_line, prev_col) = self
+                    .source_file
+                    .line_col_token_begin(prev_entry.name.token_id);
+                return Err(self.make_error(
+                    ResolverErrorType::RedefinedFunction {
+                        name: name_str.to_string(),
+                        prev_line,
+                        prev_col,
+                    },
+                    func_def.name,
+                ));
+            }
+
             let resolved_body = self.visit_block(body)?;
 
-            if !self.current_function_return && func_def.name.item != "main" {
+            if !self.current_function_return && name_str != "main" {
                 let token = func_def
                     .name
                     .get_token(&self.source_file.get_tokens_checked());
                 self.warnings.push(ResolverWarning {
-                    warn_type: ResolverWarningType::NonVoidFunctionNoReturn(
-                        func_def.name.item.clone(),
-                    ),
+                    warn_type: ResolverWarningType::NonVoidFunctionNoReturn(name_str.to_string()),
                     location: token.span(),
                 });
             }
@@ -224,9 +325,12 @@ impl<'a> ASTFolder<ResolverError> for Resolver<'a> {
             None
         };
 
-        Ok(FunctionDef {
-            name: func_def.name,
+        self.end_scope();
+
+        Ok(FunctionDecl {
+            name: func_def.name.with_value(new_symbol),
             body: resolved_body,
+            params,
         })
     }
 
@@ -239,7 +343,7 @@ impl<'a> ASTFolder<ResolverError> for Resolver<'a> {
                 .name
                 .get_token(&self.source_file.get_tokens_checked());
 
-            let prev_line_col = self.source_file.line_col_token_begin(sym.token_id);
+            let prev_line_col = self.source_file.line_col_token_begin(sym.name.token_id);
             return Err(ResolverError {
                 err_type: ResolverErrorType::VariableAlreadyDefined {
                     name: name_str.to_string(),
@@ -254,6 +358,8 @@ impl<'a> ASTFolder<ResolverError> for Resolver<'a> {
             name_str.to_string(),
             updated_name,
             var_decl.name.with_value(()),
+            Linkage::None,
+            true,
         );
 
         let resolved_init = if let Some(init) = var_decl.initializer {

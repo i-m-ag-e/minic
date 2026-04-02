@@ -10,7 +10,7 @@ use crate::{
     resolver::var_map::ScopedVarMap,
     semantic_analyzer::SwitchMap,
     source_file::SourceFile,
-    tacky::{self, Instruction, InstructionKind, Value},
+    tacky::{self, FunctionDef, Instruction, InstructionKind, Value},
     with_token::WithToken,
 };
 
@@ -18,6 +18,7 @@ use crate::{
 pub struct TackyGen<'a> {
     pub var_count: usize,
     pub current_body: Vec<Instruction>,
+    program: Vec<FunctionDef>,
     source_file: &'a SourceFile,
     switch_map: SwitchMap,
     switch_stack: Vec<LoopID>,
@@ -37,6 +38,7 @@ impl<'a> TackyGen<'a> {
             switch_map,
             switch_stack: Vec::new(),
             symbol_table,
+            program: Vec::new(),
         }
     }
 
@@ -285,6 +287,32 @@ impl<'a> ExprVisitor<Value> for TackyGen<'a> {
             Literal::Integer(i) => Value::Constant(i),
             _ => unimplemented!(),
         }
+    }
+
+    fn visit_function_call(&mut self, expr: &expr::FunctionCall) -> Value {
+        let dest_var = self.make_var();
+        let expr::Expr::Variable(ref var) = **expr.callee_expr else {
+            unreachable!(
+                "function call with non-variable callee cannot exist at the TACKY gen stage"
+            );
+        };
+        let func_name = self.symbol_table.resolve_assert(**var).to_string();
+
+        let args = expr.args.iter().map(|arg| self.visit_expr(arg)).collect();
+        let is_external = self
+            .symbol_table
+            .lookup(&func_name)
+            .is_none_or(|sym| !sym.defined);
+        self.emit(
+            InstructionKind::FunctionCall {
+                args,
+                dest: dest_var.clone(),
+                func_name,
+                is_external,
+            },
+            expr.callee_expr.token_id,
+        );
+        dest_var
     }
 
     fn visit_unary_expr(&mut self, expr: &expr::UnaryExpr) -> Value {
@@ -549,7 +577,7 @@ impl<'a> StmtVisitor<()> for TackyGen<'a> {
     fn visit_return_stmt(&mut self, stmt: &WithToken<Option<expr::Expr>>) -> () {
         if let Some(ret_expr) = &stmt.item {
             let ret_val = self.visit_expr(ret_expr);
-            self.emit(InstructionKind::Return(ret_val), stmt.token_id);
+            self.emit(InstructionKind::ReturnValue(ret_val), stmt.token_id);
         } else {
             unimplemented!()
         }
@@ -638,55 +666,70 @@ impl<'a> StmtVisitor<()> for TackyGen<'a> {
 
 impl<'a> ASTVisitor for TackyGen<'a> {
     type ProgramResult = tacky::Program;
-    type FunctionDefResult = tacky::FunctionDef;
+    type FunctionDeclResult = ();
     type StmtResult = ();
     type ExprResult = Value;
     type BlockItemResult = ();
     type BlockResult = ();
     type VarDeclResult = ();
 
-    fn visit_function_def(&mut self, func_def: &ast::FunctionDef) -> Self::FunctionDefResult {
+    fn visit_function_def(&mut self, func_def: &ast::FunctionDecl) -> Self::FunctionDeclResult {
+        if func_def.body.is_none() {
+            return;
+        }
         assert!(self.current_body.is_empty());
 
-        if func_def.body.is_none() {
-            unimplemented!();
-        }
+        let func_name = self
+            .symbol_table
+            .resolve_assert(func_def.name.item)
+            .to_string();
+
+        let params = func_def
+            .params
+            .iter()
+            .map(|param| {
+                param
+                    .item
+                    .map(|sym| self.symbol_table.resolve_assert(sym).to_string())
+            })
+            .collect();
 
         self.visit_block(func_def.body.as_ref().unwrap());
 
-        if func_def.name.item == "main" {
+        if func_name == "main" {
             self.emit(
-                InstructionKind::Return(Value::Constant(0)),
+                InstructionKind::ReturnValue(Value::Constant(0)),
                 func_def.name.token_id,
             );
+        } else {
+            self.emit(InstructionKind::Return, func_def.name.token_id);
         }
 
-        let line_col = self
-            .source_file
-            .line_col_token_begin(func_def.name.token_id);
-        tacky::FunctionDef {
-            name: func_def.name.item.clone(),
+        self.program.push(tacky::FunctionDef {
+            name: func_name,
+            params,
             body: mem::replace(&mut self.current_body, Vec::new()),
-            pos: line_col,
-        }
+        });
     }
 
     fn visit_program(&mut self, program: &ast::Program) -> Self::ProgramResult {
         assert!(self.current_body.is_empty());
 
-        let mut function_defs = Vec::new();
+        self.program = Vec::new();
         for func_def in &program.function_defs {
-            let tacky_func_def = self.visit_function_def(func_def);
-            function_defs.push(tacky_func_def);
+            self.visit_function_def(func_def);
         }
 
         // only use the first function for now
-        tacky::Program(function_defs.remove(0))
+        tacky::Program(std::mem::take(&mut self.program))
     }
 
     fn visit_block_item(&mut self, item: &ast::BlockItem) -> Self::BlockItemResult {
         match &item {
-            ast::BlockItem::Decl(var_decls) => var_decls
+            ast::BlockItem::FunctionDecl(func_decl) => {
+                self.visit_function_def(func_decl);
+            }
+            ast::BlockItem::VarDecl(var_decls) => var_decls
                 .iter()
                 .for_each(|var_decl| self.visit_var_decl(var_decl)),
             ast::BlockItem::Stmt(stmt) => self.visit_stmt(stmt),
